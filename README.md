@@ -2,6 +2,21 @@
 
 A modern, high-performance web interface for simplified management of AmneziaWG and Xray (XTLS-Reality) servers. Designed to provide a premium user experience with robust administrative capabilities.
 
+> ### 🔄 Compatibility with Official Amnezia Client
+> 
+> This panel is fully compatible with the official **Amnezia** applications!
+> 
+> **How to connect an existing server:**
+> 1. Add your pre-configured server by entering its **IP address**, **login** and **password**
+> 2. Go to the "Added Servers" section
+> 3. Wait for the automatic server verification
+> 4. The panel will automatically detect:
+>    - ✅ Installed protocols
+>    - ✅ Existing users
+>    - ✅ Current configuration
+>
+> ⚡ **After verification, you can manage the server directly from the panel!**
+
 ![Servers Dashboard](https://github.com/PRVTPRO/Amnezia-Web-Panel/blob/main/screen/panel1.png)
 
 
