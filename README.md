@@ -73,7 +73,7 @@ Configuration panel for system parameters and preferences:
 
 1.  **Clone the repository**:
     ```bash
-    [git clone https://github.com/amnezia-vpn/amnezia-client.git](https://github.com/PRVTPRO/Amnezia-Web-Panel.git)
+    git clone https://github.com/amnezia-vpn/amnezia-client.git
     cd Amnezia-Web-Panel
     ```
 
