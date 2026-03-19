@@ -101,6 +101,16 @@ If you require any custom features not currently available in the panel, **let u
     ```bash
     pip install -r requirements.txt
     ```
+## 🚀 Getting Started
+
+Launch the application:
+
+```bash
+python app.py
+```
+
+The panel will be accessible at `http://localhost:5000`.
+
 ## 📦 Installation Method 2
 
 Download and run the executable file for your system.
@@ -114,15 +124,6 @@ Mac
 
 https://hub.docker.com/r/prvtpro/amnezia-panel
 
-## 🚀 Getting Started
-
-Launch the application:
-
-```bash
-python app.py
-```
-
-The panel will be accessible at `http://localhost:5000`.
 
 ### Initial Login
 *   **Username**: `admin`
