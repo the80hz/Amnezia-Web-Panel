@@ -521,6 +521,8 @@ class AddUserRequest(BaseModel):
     server_id: Optional[int] = None
     protocol: Optional[str] = None
     connection_name: Optional[str] = None
+    expiration_date: Optional[str] = None
+
 
 
 class ServerConfigSaveRequest(BaseModel):
@@ -547,6 +549,15 @@ class CaptchaSettings(BaseModel):
     enabled: bool = False
 
 
+class SSLSettings(BaseModel):
+    enabled: bool = False
+    domain: str = ''
+    cert_path: str = ''
+    key_path: str = ''
+    cert_text: str = ''
+    key_text: str = ''
+    panel_port: int = 5000
+
 class TelegramSettings(BaseModel):
     token: str = ''
     enabled: bool = False
@@ -560,7 +571,9 @@ class UpdateUserRequest(BaseModel):
     description: Optional[str] = None
     traffic_limit: Optional[float] = 0
     traffic_reset_strategy: Optional[str] = None
+    expiration_date: Optional[str] = None
     password: Optional[str] = None
+
 
 
 class SaveSettingsRequest(BaseModel):
@@ -568,6 +581,7 @@ class SaveSettingsRequest(BaseModel):
     sync: SyncSettings
     captcha: CaptchaSettings
     telegram: TelegramSettings
+    ssl: SSLSettings
 
 
 class ToggleUserRequest(BaseModel):
@@ -634,11 +648,29 @@ async def startup():
         if 'last_reset_at' not in u:
             u['last_reset_at'] = datetime.now().isoformat()
             migrated = True
+        if 'expiration_date' not in u:
+            u['expiration_date'] = None
+            migrated = True
             
         if migrated:
             changed = True
             logger.info(f"Migrated user {u['username']} to new traffic/sharing fields")
-            
+    
+    # SSL settings migration
+    if 'ssl' not in data.get('settings', {}):
+        if 'settings' not in data: data['settings'] = {}
+        data['settings']['ssl'] = {
+            'enabled': False,
+            'domain': '',
+            'cert_path': '',
+            'key_path': '',
+            'cert_text': '',
+            'key_text': '',
+            'panel_port': 5000
+        }
+        changed = True
+        logger.info("Migrated SSL settings")
+
     if changed:
         save_data(data)
 
@@ -742,6 +774,18 @@ async def periodic_background_tasks():
                                 if limit > 0 and u['traffic_used'] >= limit and u.get('enabled', True):
                                     if uid not in to_disable_uids:
                                         to_disable_uids.append(uid)
+                                
+                                # Check expiration date
+                                exp_str = u.get('expiration_date')
+                                if exp_str and u.get('enabled', True):
+                                    try:
+                                        exp_date = datetime.fromisoformat(exp_str)
+                                        if now > exp_date:
+                                            logger.info(f"Subscription expired for user {u['username']} (expired at {exp_str})")
+                                            if uid not in to_disable_uids:
+                                                to_disable_uids.append(uid)
+                                    except:
+                                        pass
                     save_data(curr_data)
                     
             if to_disable_uids:
@@ -1585,6 +1629,7 @@ async def api_add_user(request: Request, req: AddUserRequest):
             'traffic_used': 0,
             'traffic_total': 0,
             'last_reset_at': datetime.now().isoformat(),
+            'expiration_date': req.expiration_date,
             'enabled': True,
             'created_at': datetime.now().isoformat(),
             'remnawave_uuid': None,
@@ -1654,6 +1699,9 @@ async def api_update_user(request: Request, user_id: str, req: UpdateUserRequest
             user['traffic_reset_strategy'] = req.traffic_reset_strategy
             user['last_reset_at'] = datetime.now().isoformat()
             
+        if req.expiration_date is not None:
+            user['expiration_date'] = req.expiration_date or None
+
         if req.password:
             user['password_hash'] = hash_password(req.password)
             
@@ -1977,6 +2025,7 @@ async def save_settings(request: Request, payload: SaveSettingsRequest):
     data['settings']['sync'] = payload.sync.dict()
     data['settings']['captcha'] = payload.captcha.dict()
     data['settings']['telegram'] = payload.telegram.dict()
+    data['settings']['ssl'] = payload.ssl.dict()
     save_data(data)
     logger.info("Settings saved (including captcha and telegram)")
 
@@ -2115,4 +2164,41 @@ async def api_backup_restore(request: Request, file: UploadFile = File(...)):
 
 
 if __name__ == '__main__':
-    uvicorn.run(app, host='0.0.0.0', port=5000)
+    data = load_data()
+    ssl_conf = data.get('settings', {}).get('ssl', {})
+    
+    cert_file = ssl_conf.get('cert_path')
+    key_file = ssl_conf.get('key_path')
+    
+    # If text is provided, create temporary files
+    temp_dir = os.path.join(os.getcwd(), 'ssl_temp')
+    if ssl_conf.get('enabled'):
+        if ssl_conf.get('cert_text') or ssl_conf.get('key_text'):
+            if not os.path.exists(temp_dir):
+                os.makedirs(temp_dir)
+            
+            if ssl_conf.get('cert_text'):
+                cert_file = os.path.join(temp_dir, 'cert.pem')
+                with open(cert_file, 'w') as f:
+                    f.write(ssl_conf['cert_text'].strip() + '\n')
+            
+            if ssl_conf.get('key_text'):
+                key_file = os.path.join(temp_dir, 'key.pem')
+                with open(key_file, 'w') as f:
+                    f.write(ssl_conf['key_text'].strip() + '\n')
+
+    uvicorn_kwargs = {
+        "app": app,
+        "host": "0.0.0.0",
+        "port": ssl_conf.get('panel_port', 5000)
+    }
+    
+    if ssl_conf.get('enabled') and cert_file and key_file:
+        if os.path.exists(cert_file) and os.path.exists(key_file):
+            logger.info(f"Starting panel with HTTPS enabled on domain: {ssl_conf.get('domain')} at port {uvicorn_kwargs['port']}")
+            uvicorn_kwargs["ssl_certfile"] = cert_file
+            uvicorn_kwargs["ssl_keyfile"] = key_file
+        else:
+            logger.error("SSL certificates not found at specified paths. Starting with HTTP.")
+
+    uvicorn.run(**uvicorn_kwargs)

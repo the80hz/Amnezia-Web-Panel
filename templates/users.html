@@ -107,6 +107,11 @@
             </div>
 
             <div class="form-group">
+                <label class="form-label">{{ _('expiration_date_label') }}</label>
+                <input class="form-input" type="datetime-local" id="newExpirationDate">
+            </div>
+
+            <div class="form-group">
                 <label class="form-label">{{ _('description_label') }}</label>
                 <textarea class="form-input" id="newDescription" rows="2"
                     placeholder="{{ _('description_label') }}"></textarea>
@@ -184,6 +189,10 @@
                         <option value="monthly">{{ _('traffic_reset_monthly') }}</option>
                     </select>
                 </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">{{ _('expiration_date_label') }}</label>
+                <input class="form-input" type="datetime-local" id="editUserExpiration">
             </div>
             <div class="form-group">
                 <label class="form-label">{{ _('description_label') }}</label>
@@ -381,6 +390,7 @@
                                 ${u.created_at ? `<span>📅 ${u.created_at.substring(0, 10)}</span>` : ''}
                                 ${u.telegramId ? `<span>💬 ${u.telegramId}</span>` : ''}
                                 ${u.email ? `<span>📧 ${u.email}</span>` : ''}
+                                ${u.expiration_date ? `<span style="color: ${new Date(u.expiration_date) < new Date() ? 'var(--danger)' : 'var(--text-muted)'}">⌛ ${_('expiration_date_label')}: ${new Date(u.expiration_date).toLocaleString()}</span>` : ''}
                             </div>
                             ${u.description ? `<div class="client-meta" style="font-size: 0.75rem; opacity: 0.8; margin-top: 2px;">📝 ${u.description}</div>` : ''}
                             ${(() => {
@@ -424,7 +434,7 @@
                                 onclick="openAddConnectionForUser('${u.id}', '${u.username}')" 
                                 title="${_('add_connection')}">🔗</button>
                         <button class="btn btn-secondary btn-sm btn-icon" 
-                                onclick='openEditUser({"id": "${u.id}", "username": "${u.username}", "tg": "${u.telegramId || ""}", "email": "${u.email || ""}", "desc": "${u.description || ""}", "limit": "${u.traffic_limit ? (u.traffic_limit / Math.pow(1024, 3)).toFixed(2) : 0}", "strategy": "${u.traffic_reset_strategy || 'never'}"})'
+                                onclick='openEditUser({"id": "${u.id}", "username": "${u.username}", "tg": "${u.telegramId || ""}", "email": "${u.email || ""}", "desc": "${u.description || ""}", "limit": "${u.traffic_limit ? (u.traffic_limit / Math.pow(1024, 3)).toFixed(2) : 0}", "strategy": "${u.traffic_reset_strategy || 'never'}", "expiration": "${u.expiration_date || ''}"})'
                                 title="${_('edit')}">✏️</button>
                         <button class="btn btn-secondary btn-sm btn-icon" onclick="openShareModal(this.dataset)"
                                 data-id="${u.id}" data-username="${u.username}" data-token="${u.share_token || ''}"
@@ -532,6 +542,7 @@
                 description: document.getElementById('newDescription').value || null,
                 traffic_limit: parseFloat(document.getElementById('newTrafficLimit').value || '0'),
                 traffic_reset_strategy: document.getElementById('newTrafficResetStrategy').value,
+                expiration_date: document.getElementById('newExpirationDate').value || null,
             };
             const serverId = document.getElementById('newUserServer').value;
             if (serverId !== '') {
@@ -817,6 +828,7 @@
         document.getElementById('editUserDesc').value = data.desc || '';
         document.getElementById('editUserLimit').value = data.limit || '0';
         document.getElementById('editUserTrafficResetStrategy').value = data.strategy || 'never';
+        document.getElementById('editUserExpiration').value = data.expiration || '';
         document.getElementById('editUserPass').value = '';
         openModal('editUserModal');
     }
@@ -833,6 +845,7 @@
             description: document.getElementById('editUserDesc').value,
             traffic_limit: parseFloat(document.getElementById('editUserLimit').value || '0'),
             traffic_reset_strategy: document.getElementById('editUserTrafficResetStrategy').value,
+            expiration_date: document.getElementById('editUserExpiration').value || null,
             password: document.getElementById('editUserPass').value || null
         };
 

@@ -98,6 +98,53 @@
             </div>
             <p class="form-hint" style="margin-top: var(--space-md);">{{ _('api_docs_hint') }}</p>
         </div>
+
+        <!-- BLOCK SSL/HTTPS -->
+        <div class="card">
+            <h3 class="card-title" style="margin-bottom: var(--space-lg);">🔒 {{ _('ssl_title') }}</h3>
+            <form id="sslForm">
+                <div class="form-group">
+                    <label class="form-label">
+                        <input type="checkbox" id="ssl_enabled" {% if settings.get('ssl', {}).get('enabled') %}checked{% endif %}>
+                        {{ _('enable_https') }}
+                    </label>
+                </div>
+                <div class="form-group" style="margin-top: var(--space-md);">
+                    <label class="form-label">{{ _('panel_port_label') }}</label>
+                    <input type="number" class="form-input" id="panel_port" value="{{ settings.get('ssl', {}).get('panel_port', 5000) }}" placeholder="5000">
+                </div>
+                <div id="sslFields" style="{% if not settings.get('ssl', {}).get('enabled') %}display:none;{% endif %} margin-top: var(--space-md);">
+                    <div class="form-group">
+                        <label class="form-label">{{ _('domain_label') }}</label>
+                        <input type="text" class="form-input" id="ssl_domain" value="{{ settings.get('ssl', {}).get('domain', '') }}" placeholder="vpn.example.com">
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md);">
+                        <div class="form-group">
+                            <label class="form-label">{{ _('cert_path_label') }}</label>
+                            <input type="text" class="form-input" id="ssl_cert_path" value="{{ settings.get('ssl', {}).get('cert_path', '') }}" placeholder="/etc/amnezia/cert.pem">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">{{ _('key_path_label') }}</label>
+                            <input type="text" class="form-input" id="ssl_key_path" value="{{ settings.get('ssl', {}).get('key_path', '') }}" placeholder="/etc/amnezia/key.pem">
+                        </div>
+                    </div>
+
+                    <div class="divider" style="margin: var(--space-md) 0;">{{ _('or_paste_text') }}</div>
+
+                    <div class="form-group">
+                        <label class="form-label">{{ _('cert_text_label') }}</label>
+                        <textarea class="form-input" id="ssl_cert_text" rows="4" placeholder="-----BEGIN CERTIFICATE----- ...">{{ settings.get('ssl', {}).get('cert_text', '') }}</textarea>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ _('key_text_label') }}</label>
+                        <textarea class="form-input" id="ssl_key_text" rows="4" placeholder="-----BEGIN PRIVATE KEY----- ...">{{ settings.get('ssl', {}).get('key_text', '') }}</textarea>
+                    </div>
+
+                    <p class="form-hint">{{ _('ssl_hint') }}</p>
+                </div>
+            </form>
+        </div>
     </div>
 
     <!-- RIGHT COLUMN -->
@@ -285,6 +332,10 @@
         if (e.target.checked) updateProtocolsForSync();
     });
 
+    document.getElementById('ssl_enabled').addEventListener('change', (e) => {
+        document.getElementById('sslFields').style.display = e.target.checked ? 'block' : 'none';
+    });
+
     async function syncRemnawaveNow() {
         const btn = document.getElementById('syncNowBtn');
         const text = document.getElementById('syncNowBtnText');
@@ -374,11 +425,21 @@
             enabled: botCurrentlyRunning
         };
 
+        const ssl = {
+            enabled: document.getElementById('ssl_enabled').checked,
+            domain: document.getElementById('ssl_domain').value.trim(),
+            cert_path: document.getElementById('ssl_cert_path').value.trim(),
+            key_path: document.getElementById('ssl_key_path').value.trim(),
+            cert_text: document.getElementById('ssl_cert_text').value.trim(),
+            key_text: document.getElementById('ssl_key_text').value.trim(),
+            panel_port: parseInt(document.getElementById('panel_port').value || '5000')
+        };
+
         try {
             const res = await fetch('/api/settings/save', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ appearance, sync, captcha, telegram })
+                body: JSON.stringify({ appearance, sync, captcha, telegram, ssl })
             });
             if (!res.ok) throw new Error(_('error'));
             showToast(_('settings_saved'), 'success');

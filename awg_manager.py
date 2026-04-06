@@ -77,11 +77,11 @@ def generate_awg_params(use_ranges=False):
     s4 = random.randint(10, 50)
 
     if use_ranges:
-        # Standard AWG 2.0 headers are ranges
-        h1 = f"{random.randint(1, 10000)}-{random.randint(10001, 4294967295)}"
-        h2 = f"{random.randint(1, 10000)}-{random.randint(10001, 4294967295)}"
-        h3 = f"{random.randint(1, 10000)}-{random.randint(10001, 4294967295)}"
-        h4 = f"{random.randint(1, 10000)}-{random.randint(10001, 4294967295)}"
+        # Standard AWG 2.0 headers. Use single large numbers.
+        h1 = str(random.randint(1000000000, 4294967295))
+        h2 = str(random.randint(1000000000, 4294967295))
+        h3 = str(random.randint(1000000000, 4294967295))
+        h4 = str(random.randint(1000000000, 4294967295))
     else:
         h1 = str(random.randint(100000000, 4294967295))
         h2 = str(random.randint(100000000, 4294967295))

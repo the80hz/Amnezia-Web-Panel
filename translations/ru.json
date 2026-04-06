@@ -137,6 +137,7 @@
     "tg_id_label": "Telegram ID (опц.)",
     "email_label": "Email (опц.)",
     "traffic_limit_label": "Лимит трафика (ГБ) (опц., 0 = ∞)",
+    "expiration_date_label": "Срок действия (до)",
     "description_label": "Описание (опц.)",
     "auto_conn_title": "Автоматическое создание подключения (опционально)",
     "server_label": "Сервер",
@@ -266,5 +267,15 @@
     "check_server_services": "Проверить сервисы сервера",
     "reboot_server": "Перезагрузить сервер",
     "clear_server": "Очистить сервер",
-    "remove_server": "Удалить сервер из панели"
+    "remove_server": "Удалить сервер из панели",
+    "ssl_title": "SSL / HTTPS Настройки",
+    "enable_https": "Включить HTTPS",
+    "panel_port_label": "Порт панели",
+    "domain_label": "Доменное имя",
+    "cert_path_label": "Путь к SSL сертификату (.pem)",
+    "key_path_label": "Путь к приватному ключу (.pem)",
+    "or_paste_text": "ИЛИ вставьте текст сертификатов",
+    "cert_text_label": "Содержимое сертификата (CRT)",
+    "key_text_label": "Содержимое ключа (KEY)",
+    "ssl_hint": "После включения панель будет доступна по https:// на указанном домене. Убедитесь, что пути к файлам или текстовые данные верны."
 }
