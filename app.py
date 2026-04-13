@@ -1777,9 +1777,26 @@ async def api_add_user_connection(request: Request, user_id: str, req: AddUserCo
         if req.client_id:
             # Use existing client
             target_client_id = req.client_id
-            # Retrieve config for existing client
-            config = await asyncio.to_thread(manager.get_client_config, req.protocol, req.client_id, server['host'], port)
-            result = {'client_id': target_client_id, 'config': config}
+            result = {'client_id': target_client_id}
+            # Try to retrieve config for existing client.
+            # Some external/native AWG peers have no stored private key,
+            # so we allow link-only mode instead of failing with 500.
+            try:
+                config = await asyncio.to_thread(manager.get_client_config, req.protocol, req.client_id, server['host'], port)
+                result['config'] = config
+            except RuntimeError as e:
+                err_text = str(e)
+                if 'private key not stored' in err_text.lower():
+                    logger.info(
+                        "Link-only mode for existing client %s on protocol %s: %s",
+                        req.client_id,
+                        req.protocol,
+                        err_text,
+                    )
+                    result['link_only'] = True
+                    result['note'] = 'Client linked to user, but config cannot be reconstructed (private key is not stored).'
+                else:
+                    raise
         else:
             # Create new client
             result = await asyncio.to_thread(manager.add_client, req.protocol, req.name, server['host'], port)
@@ -1804,6 +1821,10 @@ async def api_add_user_connection(request: Request, user_id: str, req: AddUserCo
         if result.get('config'):
             resp['config'] = result['config']
             resp['vpn_link'] = generate_vpn_link(result['config'])
+        if result.get('link_only'):
+            resp['link_only'] = True
+        if result.get('note'):
+            resp['note'] = result['note']
         return resp
     except Exception as e:
         logger.exception("Error adding user connection")
