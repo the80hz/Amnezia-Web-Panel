@@ -114,6 +114,31 @@ class AWGManager:
     def __init__(self, ssh_manager):
         self.ssh = ssh_manager
 
+    def _runtime_mode(self, protocol_type):
+        """Detect effective protocol mode inside container: 'legacy' or 'modern'."""
+        # Default to declared type if container is unavailable.
+        default_mode = 'legacy' if protocol_type == self.AWG_LEGACY else 'modern'
+        container_name = self._container_name(protocol_type)
+
+        detect_cmd = (
+            "sh -c '"
+            "if [ -f /opt/amnezia/awg/wg0.conf ]; then echo legacy; "
+            "elif [ -f /opt/amnezia/awg/awg0.conf ]; then echo modern; "
+            "elif command -v awg >/dev/null 2>&1; then echo modern; "
+            "elif command -v wg >/dev/null 2>&1; then echo legacy; "
+            "else echo unknown; fi'"
+        )
+        out, _, code = self.ssh.run_sudo_command(
+            f"docker exec -i {container_name} {detect_cmd}"
+        )
+        if code != 0:
+            return default_mode
+
+        mode = out.strip().split('\n')[-1].strip().lower()
+        if mode in ('legacy', 'modern'):
+            return mode
+        return default_mode
+
     def _container_name(self, protocol_type):
         """Get Docker container name for protocol type."""
         if protocol_type == self.AWG_LEGACY:
@@ -124,32 +149,32 @@ class AWGManager:
 
     def _config_path(self, protocol_type):
         """Get server config path inside container."""
-        if protocol_type == self.AWG_LEGACY:
+        if self._runtime_mode(protocol_type) == 'legacy':
             return '/opt/amnezia/awg/wg0.conf'
-        # Both AWG and AWG2 use awg0.conf
+        # Modern AWG (AWG/AWG2) uses awg0.conf
         return '/opt/amnezia/awg/awg0.conf'
 
     def _wg_binary(self, protocol_type):
         """Get the wireguard binary name."""
-        if protocol_type == self.AWG_LEGACY:
+        if self._runtime_mode(protocol_type) == 'legacy':
             return 'wg'
-        # AWG and AWG2 both use 'awg' binary
+        # Modern AWG uses 'awg' binary
         return 'awg'
 
 
     def _quick_binary(self, protocol_type):
         """Get the wireguard-quick binary name."""
-        if protocol_type == self.AWG_LEGACY:
+        if self._runtime_mode(protocol_type) == 'legacy':
             return 'wg-quick'
-        # AWG and AWG2 both use 'awg-quick'
+        # Modern AWG uses 'awg-quick'
         return 'awg-quick'
 
 
     def _interface_name(self, protocol_type):
         """Get the interface name."""
-        if protocol_type == self.AWG_LEGACY:
+        if self._runtime_mode(protocol_type) == 'legacy':
             return 'wg0'
-        # AWG and AWG2 both use 'awg0' interface
+        # Modern AWG uses 'awg0' interface
         return 'awg0'
 
     def _docker_image(self, protocol_type):
