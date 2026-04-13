@@ -12,6 +12,8 @@ services:
     #   - traefik.http.services.amnezia_panel.loadbalancer.server.port=5000
     ports:
       - "${APP_PORT:-5000}:5000"
+    volumes:
+      - ./data.json:/app/data.json
     restart: unless-stopped
 
     healthcheck:
