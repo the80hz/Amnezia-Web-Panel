@@ -146,6 +146,20 @@ def generate_vpn_link(config_text):
     return f"vpn://{b64}"
 
 
+def _find_imported_config(data, server_id: int, protocol: str, client_id: str):
+    """Find locally imported raw config for a linked connection in data.json."""
+    for c in data.get('user_connections', []):
+        if (
+            c.get('server_id') == server_id
+            and c.get('protocol') == protocol
+            and c.get('client_id') == client_id
+        ):
+            cfg = c.get('imported_config', '')
+            if cfg:
+                return cfg
+    return ''
+
+
 def hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
     h = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
@@ -1512,11 +1526,24 @@ async def api_get_connection_config(request: Request, server_id: int, req: Conne
             return JSONResponse({'error': 'Client ID is required'}, status_code=400)
         proto_info = server.get('protocols', {}).get(req.protocol, {})
         port = proto_info.get('port', '55424')
-        ssh = get_ssh(server)
-        ssh.connect()
-        manager = get_protocol_manager(ssh, req.protocol)
-        config = manager.get_client_config(req.protocol, req.client_id, server['host'], port)
-        ssh.disconnect()
+        config = ''
+        try:
+            ssh = get_ssh(server)
+            ssh.connect()
+            manager = get_protocol_manager(ssh, req.protocol)
+            config = manager.get_client_config(req.protocol, req.client_id, server['host'], port)
+            ssh.disconnect()
+        except RuntimeError as e:
+            err_text = str(e)
+            if 'private key not stored' in err_text.lower():
+                config = _find_imported_config(data, server_id, req.protocol, req.client_id)
+                if not config:
+                    return JSONResponse(
+                        {'error': 'Config is unavailable: client private key is not stored for this connection.'},
+                        status_code=400
+                    )
+            else:
+                raise
         vpn_link = generate_vpn_link(config) if config else ''
         return {'config': config, 'vpn_link': vpn_link}
     except Exception as e:
@@ -1961,12 +1988,14 @@ async def api_share_config(token: str, connection_id: str, request: Request):
         server = data['servers'][sid]
         proto_info = server.get('protocols', {}).get(conn['protocol'], {})
         port = proto_info.get('port', '55424')
-        ssh = get_ssh(server)
-        ssh.connect()
-        # Use appropriate manager for the protocol
-        manager = get_protocol_manager(ssh, conn['protocol'])
-        config = manager.get_client_config(conn['protocol'], conn['client_id'], server['host'], port)
-        ssh.disconnect()
+        config = conn.get('imported_config', '')
+        if not config:
+            ssh = get_ssh(server)
+            ssh.connect()
+            # Use appropriate manager for the protocol
+            manager = get_protocol_manager(ssh, conn['protocol'])
+            config = manager.get_client_config(conn['protocol'], conn['client_id'], server['host'], port)
+            ssh.disconnect()
         vpn_link = generate_vpn_link(config) if config else ''
         return {'config': config, 'vpn_link': vpn_link}
     except Exception as e:
@@ -1993,12 +2022,14 @@ async def api_my_connection_config(request: Request, connection_id: str):
         server = data['servers'][sid]
         proto_info = server.get('protocols', {}).get(conn['protocol'], {})
         port = proto_info.get('port', '55424')
-        ssh = get_ssh(server)
-        ssh.connect()
-        # Use appropriate manager for the protocol (fixes Telemt/Xray not working for users)
-        manager = get_protocol_manager(ssh, conn['protocol'])
-        config = manager.get_client_config(conn['protocol'], conn['client_id'], server['host'], port)
-        ssh.disconnect()
+        config = conn.get('imported_config', '')
+        if not config:
+            ssh = get_ssh(server)
+            ssh.connect()
+            # Use appropriate manager for the protocol (fixes Telemt/Xray not working for users)
+            manager = get_protocol_manager(ssh, conn['protocol'])
+            config = manager.get_client_config(conn['protocol'], conn['client_id'], server['host'], port)
+            ssh.disconnect()
         vpn_link = generate_vpn_link(config) if config else ''
         return {'config': config, 'vpn_link': vpn_link}
     except Exception as e:
