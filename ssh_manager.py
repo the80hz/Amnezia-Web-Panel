@@ -7,12 +7,18 @@ import paramiko
 import io
 import time
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 
 
 class SSHManager:
     """Manages SSH connections and command execution on remote servers."""
+
+    _operation_lock = threading.Lock()
+    _state_lock = threading.Lock()
+    _waiting_count = 0
+    _active_host = None
 
     def __init__(self, host, port, username, password=None, private_key=None):
         self.host = host
@@ -22,9 +28,75 @@ class SSHManager:
         self.private_key = private_key
         self.client = None
         self._is_root = (username == 'root')
+        self._slot_acquired = False
+        self.waited_for_slot = False
+        self.wait_time_seconds = 0.0
+
+    @classmethod
+    def get_queue_state(cls):
+        """Return current global SSH queue state."""
+        with cls._state_lock:
+            return {
+                'busy': cls._operation_lock.locked(),
+                'waiting': cls._waiting_count,
+                'active_host': cls._active_host,
+            }
+
+    def _acquire_operation_slot(self):
+        """Acquire global operation slot so SSH operations execute strictly one by one."""
+        started = time.monotonic()
+
+        if SSHManager._operation_lock.acquire(blocking=False):
+            self._slot_acquired = True
+            self.waited_for_slot = False
+            self.wait_time_seconds = 0.0
+            with SSHManager._state_lock:
+                SSHManager._active_host = self.host
+            return
+
+        with SSHManager._state_lock:
+            SSHManager._waiting_count += 1
+            queue_pos = SSHManager._waiting_count
+
+        self.waited_for_slot = True
+        logger.info(
+            "SSH busy: queued operation for %s@%s (position %s)",
+            self.username,
+            self.host,
+            queue_pos,
+        )
+
+        SSHManager._operation_lock.acquire()
+        self._slot_acquired = True
+        self.wait_time_seconds = max(0.0, time.monotonic() - started)
+
+        with SSHManager._state_lock:
+            if SSHManager._waiting_count > 0:
+                SSHManager._waiting_count -= 1
+            SSHManager._active_host = self.host
+
+        logger.info(
+            "SSH queue: started operation for %s@%s after %.2fs wait",
+            self.username,
+            self.host,
+            self.wait_time_seconds,
+        )
+
+    def _release_operation_slot(self):
+        if not self._slot_acquired:
+            return
+
+        with SSHManager._state_lock:
+            SSHManager._active_host = None
+
+        self._slot_acquired = False
+        self.waited_for_slot = False
+        self.wait_time_seconds = 0.0
+        SSHManager._operation_lock.release()
 
     def connect(self):
         """Establish SSH connection to the server."""
+        self._acquire_operation_slot()
         self.client = paramiko.SSHClient()
         self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
@@ -52,14 +124,22 @@ class SSHManager:
         elif self.password:
             kwargs['password'] = self.password
 
-        self.client.connect(**kwargs)
-        return True
+        try:
+            self.client.connect(**kwargs)
+            return True
+        except Exception:
+            # If connection fails, release slot immediately so queue does not stall.
+            self.disconnect()
+            raise
 
     def disconnect(self):
         """Close SSH connection."""
-        if self.client:
-            self.client.close()
-            self.client = None
+        try:
+            if self.client:
+                self.client.close()
+                self.client = None
+        finally:
+            self._release_operation_slot()
 
     def run_command(self, command, timeout=60):
         """Execute command on remote server."""

@@ -17,6 +17,53 @@
             font-weight: 700;
         }
 
+        .global-wait-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 3000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.35);
+            backdrop-filter: blur(2px);
+        }
+
+        .global-wait-overlay.active {
+            display: flex;
+        }
+
+        .global-wait-box {
+            min-width: 240px;
+            max-width: 420px;
+            text-align: center;
+            border-radius: 14px;
+            padding: 16px 18px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .global-wait-spinner {
+            width: 22px;
+            height: 22px;
+            margin: 0 auto 10px;
+            border-radius: 999px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            animation: globalWaitSpin 0.85s linear infinite;
+        }
+
+        @keyframes globalWaitSpin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .global-wait-text {
+            font-weight: 600;
+            color: var(--text);
+        }
+
         [dir="rtl"] .lang-check {
             margin-right: auto;
         }
@@ -29,6 +76,12 @@
 
 <body>
     <div class="toast-container" id="toastContainer"></div>
+    <div class="global-wait-overlay" id="globalWaitOverlay" aria-live="polite" aria-busy="false">
+        <div class="global-wait-box">
+            <div class="global-wait-spinner"></div>
+            <div class="global-wait-text" id="globalWaitText"></div>
+        </div>
+    </div>
 
     <div class="app-container">
         <header class="app-header">
@@ -213,6 +266,25 @@
         });
 
         /* ===== API Helper ===== */
+        let __apiPendingCounter = 0;
+
+        function showGlobalWait(message) {
+            const overlay = document.getElementById('globalWaitOverlay');
+            const text = document.getElementById('globalWaitText');
+            if (!overlay || !text) return;
+
+            text.textContent = message || _('loading');
+            overlay.classList.add('active');
+            overlay.setAttribute('aria-busy', 'true');
+        }
+
+        function hideGlobalWait() {
+            const overlay = document.getElementById('globalWaitOverlay');
+            if (!overlay) return;
+            overlay.classList.remove('active');
+            overlay.setAttribute('aria-busy', 'false');
+        }
+
         async function apiCall(url, method = 'GET', body = null) {
             const opts = {
                 method,
@@ -220,19 +292,30 @@
             };
             if (body) opts.body = JSON.stringify(body);
 
-            const res = await fetch(url, opts);
+            __apiPendingCounter += 1;
+            const pleaseWait = (window.I18N && window.I18N.please_wait) ? window.I18N.please_wait : 'Please wait...';
+            showGlobalWait(_('loading') + ' ' + pleaseWait);
 
-            if (res.status === 401 || res.status === 403) {
-                window.location.href = '/login';
-                throw new Error('Session expired');
+            try {
+                const res = await fetch(url, opts);
+
+                if (res.status === 401 || res.status === 403) {
+                    window.location.href = '/login';
+                    throw new Error('Session expired');
+                }
+
+                const data = await res.json();
+
+                if (!res.ok) {
+                    throw new Error(data.error || 'Unknown error');
+                }
+                return data;
+            } finally {
+                __apiPendingCounter = Math.max(0, __apiPendingCounter - 1);
+                if (__apiPendingCounter === 0) {
+                    hideGlobalWait();
+                }
             }
-
-            const data = await res.json();
-
-            if (!res.ok) {
-                throw new Error(data.error || 'Unknown error');
-            }
-            return data;
         }
 
         /* ===== Copy to clipboard ===== */

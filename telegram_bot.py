@@ -200,7 +200,7 @@ async def _handle_get_config(
     load_data_fn: Callable,
     generate_vpn_link_fn: Callable,
 ):
-    await api.answer_callback(callback_id, "Fetching config...")
+    await api.answer_callback(callback_id, "Please wait, request is queued...")
 
     panel_user = _find_user(load_data_fn, tg_id)
     if not panel_user:
@@ -228,7 +228,7 @@ async def _handle_get_config(
     conn_name = conn.get("name", "Connection")
 
     # Send "Loading..." as new message
-    loading_result = await api.send_message(chat_id, f"⏳ Fetching config for <b>{conn_name}</b>...")
+    loading_result = await api.send_message(chat_id, f"⏳ Please wait. Request queued and processed one-by-one for <b>{conn_name}</b>...")
     loading_msg_id = loading_result.get("result", {}).get("message_id")
 
     try:
