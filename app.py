@@ -1271,6 +1271,7 @@ async def api_clear_server(request: Request, server_id: int):
 async def api_server_stats(request: Request, server_id: int):
     if not _check_admin(request):
         return JSONResponse({'error': 'Forbidden'}, status_code=403)
+    ssh = None
     try:
         data = load_data()
         if server_id >= len(data['servers']):
@@ -1313,17 +1314,23 @@ async def api_server_stats(request: Request, server_id: int):
             stats['net_rx'] = stats['net_tx'] = 0
         out, _, _ = ssh.run_command("uptime -p 2>/dev/null || uptime")
         stats['uptime'] = out.strip()
-        ssh.disconnect()
         return stats
     except Exception as e:
         logger.exception("Error getting server stats")
         return JSONResponse({'error': str(e)}, status_code=500)
+    finally:
+        if ssh:
+            try:
+                ssh.disconnect()
+            except Exception:
+                pass
 
 
 @app.post('/api/servers/{server_id}/check')
 async def api_check_server(request: Request, server_id: int):
     if not _check_admin(request):
         return JSONResponse({'error': 'Forbidden'}, status_code=403)
+    ssh = None
     try:
         data = load_data()
         if server_id >= len(data['servers']):
@@ -1339,48 +1346,43 @@ async def api_check_server(request: Request, server_id: int):
         if 'protocols' not in server:
             server['protocols'] = {}
 
-        import concurrent.futures
-
-        def check_proto(proto):
+        for proto in ['awg', 'awg2', 'awg_legacy', 'xray', 'telemt', 'dns']:
             try:
                 p_manager = get_protocol_manager(ssh, proto)
                 result = p_manager.get_server_status(proto)
                 db_proto = server.get('protocols', {}).get(proto, {})
                 if not result.get('port') and db_proto.get('port'):
                     result['port'] = db_proto['port']
-                return proto, result, None
-            except Exception as e:
-                return proto, None, str(e)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
-            futures = [executor.submit(check_proto, p) for p in ['awg', 'awg2', 'awg_legacy', 'xray', 'telemt', 'dns']]
-            for future in concurrent.futures.as_completed(futures):
-                proto, result, err = future.result()
-                if err:
-                    status['protocols'][proto] = {'error': err}
+                status['protocols'][proto] = result
+                if result.get('container_exists'):
+                    if proto not in server['protocols']:
+                        server['protocols'][proto] = {
+                            'installed': True,
+                            'port': result.get('port', '55424'),
+                            'awg_params': result.get('awg_params', {})
+                        }
+                        changed = True
                 else:
-                    status['protocols'][proto] = result
-                    if result.get('container_exists'):
-                        if proto not in server['protocols']:
-                            server['protocols'][proto] = {
-                                'installed': True,
-                                'port': result.get('port', '55424'),
-                                'awg_params': result.get('awg_params', {})
-                            }
-                            changed = True
-                    else:
-                        if proto in server['protocols']:
-                            del server['protocols'][proto]
-                            changed = True
+                    if proto in server['protocols']:
+                        del server['protocols'][proto]
+                        changed = True
+            except Exception as e:
+                status['protocols'][proto] = {'error': str(e)}
                 
         if changed:
             save_data(data)
-            
-        ssh.disconnect()
+
         return status
     except Exception as e:
         logger.exception("Error checking server")
         return JSONResponse({'error': str(e), 'connection': 'failed'}, status_code=500)
+    finally:
+        if ssh:
+            try:
+                ssh.disconnect()
+            except Exception:
+                pass
 
 
 @app.post('/api/servers/{server_id}/install')

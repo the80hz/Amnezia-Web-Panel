@@ -8,8 +8,12 @@ import io
 import time
 import logging
 import threading
+import socket
 
 logger = logging.getLogger(__name__)
+# Paramiko may emit noisy transport tracebacks during transient banner failures.
+# We handle retries explicitly, so keep this logger quiet.
+logging.getLogger('paramiko.transport').setLevel(logging.CRITICAL)
 
 
 class SSHManager:
@@ -97,14 +101,13 @@ class SSHManager:
     def connect(self):
         """Establish SSH connection to the server."""
         self._acquire_operation_slot()
-        self.client = paramiko.SSHClient()
-        self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
         kwargs = {
             'hostname': self.host,
             'port': self.port,
             'username': self.username,
-            'timeout': 15,
+            'timeout': 20,
+            'banner_timeout': 45,
+            'auth_timeout': 30,
             'allow_agent': False,
             'look_for_keys': False,
         }
@@ -124,13 +127,55 @@ class SSHManager:
         elif self.password:
             kwargs['password'] = self.password
 
-        try:
-            self.client.connect(**kwargs)
-            return True
-        except Exception:
-            # If connection fails, release slot immediately so queue does not stall.
-            self.disconnect()
-            raise
+        max_attempts = 4
+        for attempt in range(1, max_attempts + 1):
+            self.client = paramiko.SSHClient()
+            self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+            try:
+                self.client.connect(**kwargs)
+                return True
+            except Exception as e:
+                msg = str(e).lower()
+                transient = isinstance(
+                    e,
+                    (
+                        paramiko.ssh_exception.SSHException,
+                        socket.timeout,
+                        TimeoutError,
+                        EOFError,
+                    ),
+                ) and (
+                    'no existing session' in msg
+                    or 'error reading ssh protocol banner' in msg
+                    or 'ssh protocol banner' in msg
+                    or 'timed out' in msg
+                    or isinstance(e, (socket.timeout, TimeoutError, EOFError))
+                )
+
+                if attempt < max_attempts and transient:
+                    logger.warning(
+                        "SSH transient connect error for %s@%s (attempt %s/%s): %s",
+                        self.username,
+                        self.host,
+                        attempt,
+                        max_attempts,
+                        e,
+                    )
+                    # Close failed client before retrying to avoid leaked transports.
+                    try:
+                        if self.client:
+                            self.client.close()
+                    except Exception:
+                        pass
+                    self.client = None
+                    backoff = 0.5 * (2 ** (attempt - 1))
+                    time.sleep(backoff)
+                    continue
+
+                # If connection fails, release slot immediately so queue does not stall.
+                self.disconnect()
+                raise
 
     def disconnect(self):
         """Close SSH connection."""
@@ -296,9 +341,3 @@ class SSHManager:
 
     def __exit__(self, *args):
         self.disconnect()
-
-    def __del__(self):
-        try:
-            self.disconnect()
-        except Exception:
-            pass
