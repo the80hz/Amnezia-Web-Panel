@@ -35,6 +35,27 @@
                             {{ 'AmneziaWG' if c.protocol == 'awg' else ('AmneziaWG 2.0' if c.protocol == 'awg2' else ('AWG Legacy' if c.protocol == 'awg_legacy' else
                             ('Xray' if c.protocol == 'xray' else c.protocol | upper))) }}
                         </span>
+                        {% if c.latest_state is defined %}
+                            {% if c.latest_state.online is sameas true %}
+                            <span class="badge badge-success" style="font-size:0.65rem;">{{ _('online') }}</span>
+                            {% elif c.latest_state.online is sameas false %}
+                            <span class="badge badge-danger" style="font-size:0.65rem;">{{ _('offline') }}</span>
+                            {% else %}
+                            <span class="badge badge-warn" style="font-size:0.65rem;">{{ _('status_unknown') }}</span>
+                            {% endif %}
+
+                            {% if c.latest_state.latest_handshake %}
+                            <span>🤝 {{ c.latest_state.latest_handshake }}</span>
+                            {% endif %}
+
+                            {% if c.latest_state.rx_human %}
+                            <span class="traffic-badge traffic-down">↓ {{ c.latest_state.rx_human }}</span>
+                            {% endif %}
+
+                            {% if c.latest_state.tx_human %}
+                            <span class="traffic-badge traffic-up">↑ {{ c.latest_state.tx_human }}</span>
+                            {% endif %}
+                        {% endif %}
                         {% if c.created_at %}
                         <span>📅 {{ c.created_at[:10] }}</span>
                         {% endif %}

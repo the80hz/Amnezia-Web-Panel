@@ -296,3 +296,9 @@ class SSHManager:
 
     def __exit__(self, *args):
         self.disconnect()
+
+    def __del__(self):
+        try:
+            self.disconnect()
+        except Exception:
+            pass

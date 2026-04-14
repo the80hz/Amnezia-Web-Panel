@@ -941,6 +941,7 @@
                 const handshake = userData.latestHandshake || '';
                 const received = userData.dataReceived || '';
                 const sent = userData.dataSent || '';
+                const online = (client.online === true || client.online === false) ? client.online : null;
                 const initial = name.charAt(0).toUpperCase();
                 const enabled = (client.enabled !== undefined) ? client.enabled : (userData.enabled !== false);
                 const hasPrivKey = !!userData.clientPrivateKey || proto === 'xray' || proto === 'telemt';
@@ -951,12 +952,18 @@
                 if (created) metaHtml += `<span>📅 ${formatDate(created)}</span>`;
 
                 if (proto === 'telemt') {
+                    if (online === true) metaHtml += `<span class="badge badge-success" style="font-size:0.65rem;">${_('online')}</span>`;
+                    else if (online === false) metaHtml += `<span class="badge badge-danger" style="font-size:0.65rem;">${_('offline')}</span>`;
+                    else metaHtml += `<span class="badge badge-warn" style="font-size:0.65rem;">${_('status_unknown')}</span>`;
                     if (userData.total_octets) metaHtml += `<span class="traffic-badge">📊 ${formatBytes(userData.total_octets)}</span>`;
                     if (userData.current_connections !== undefined) metaHtml += `<span>🔌 ${userData.current_connections} conns</span>`;
                     if (userData.active_ips !== undefined) metaHtml += `<span>📍 ${userData.active_ips} IPs</span>`;
                     if (userData.quota) metaHtml += `<span class="badge" style="font-size:0.65rem;">Quota: ${formatBytes(userData.quota)}</span>`;
                     if (userData.expiry) metaHtml += `<span class="badge" style="font-size:0.65rem;">⌛ ${formatDate(userData.expiry)}</span>`;
                 } else {
+                    if (online === true) metaHtml += `<span class="badge badge-success" style="font-size:0.65rem;">${_('online')}</span>`;
+                    else if (online === false) metaHtml += `<span class="badge badge-danger" style="font-size:0.65rem;">${_('offline')}</span>`;
+                    else metaHtml += `<span class="badge badge-warn" style="font-size:0.65rem;">${_('status_unknown')}</span>`;
                     if (handshake) metaHtml += `<span>🤝 ${handshake}</span>`;
                     if (received) metaHtml += `<span class="traffic-badge traffic-down">↓ ${received}</span>`;
                     if (sent) metaHtml += `<span class="traffic-badge traffic-up">↑ ${sent}</span>`;

@@ -46,6 +46,7 @@ else:
     application_path = os.path.dirname(__file__)
 
 DATA_FILE = os.path.join(application_path, 'data.json')
+LATEST_STATE_FILE = os.path.join(application_path, 'latest_state.json')
 
 
 # ======================== Translations ========================
@@ -104,6 +105,167 @@ def load_data():
         }
     })
     return data
+
+
+def load_latest_state():
+    if os.path.exists(LATEST_STATE_FILE):
+        try:
+            with open(LATEST_STATE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+    else:
+        data = {}
+
+    data.setdefault('updated_at', '')
+    data.setdefault('by_server_protocol_client', {})
+    data.setdefault('by_connection_id', {})
+    return data
+
+
+def save_latest_state(state):
+    tmp_file = f"{LATEST_STATE_FILE}.tmp"
+    with open(tmp_file, 'w', encoding='utf-8') as f:
+        json.dump(state, f, indent=2, ensure_ascii=False)
+    os.replace(tmp_file, LATEST_STATE_FILE)
+
+
+def _safe_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _format_bytes(value):
+    value = _safe_int(value, 0)
+    units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+    idx = 0
+    size = float(value)
+    while size >= 1024.0 and idx < len(units) - 1:
+        size /= 1024.0
+        idx += 1
+    if idx == 0:
+        return f"{int(size)} {units[idx]}"
+    return f"{size:.2f} {units[idx]}"
+
+
+def _detect_online_status(protocol: str, user_data: dict):
+    handshake = (user_data.get('latestHandshake') or '').strip()
+    if handshake:
+        hs = handshake.lower()
+        if any(tok in hs for tok in ('never', 'никогда', 'none', 'нет')):
+            return False
+        return True
+
+    if protocol == 'telemt':
+        return _safe_int(user_data.get('current_connections', 0), 0) > 0
+
+    return None
+
+
+def _extract_client_state(server_id: int, protocol: str, client: dict):
+    user_data = client.get('userData', {}) or {}
+    rx_bytes = _safe_int(user_data.get('dataReceivedBytes', 0), 0)
+    tx_bytes = _safe_int(user_data.get('dataSentBytes', 0), 0)
+    latest_handshake = (user_data.get('latestHandshake') or '').strip()
+
+    return {
+        'server_id': server_id,
+        'protocol': protocol,
+        'client_id': client.get('clientId', ''),
+        'name': user_data.get('clientName', ''),
+        'enabled': user_data.get('enabled', True),
+        'latest_handshake': latest_handshake,
+        'online': _detect_online_status(protocol, user_data),
+        'rx_bytes': rx_bytes,
+        'tx_bytes': tx_bytes,
+        'rx_human': user_data.get('dataReceived') or _format_bytes(rx_bytes),
+        'tx_human': user_data.get('dataSent') or _format_bytes(tx_bytes),
+        'current_connections': user_data.get('current_connections'),
+        'active_ips': user_data.get('active_ips'),
+    }
+
+
+def _attach_latest_state_to_connections(connections: list, latest_state: dict):
+    by_conn_id = latest_state.get('by_connection_id', {})
+    by_spc = latest_state.get('by_server_protocol_client', {})
+
+    for c in connections:
+        conn_id = c.get('id', '')
+        state = by_conn_id.get(conn_id)
+        if not state:
+            key = f"{c.get('server_id')}:{c.get('protocol')}:{c.get('client_id')}"
+            state = by_spc.get(key)
+        if state:
+            c['latest_state'] = state
+    return connections
+
+
+def _build_cached_clients_for_server_protocol(data: dict, latest_state: dict, server_id: int, protocol: str):
+    by_spc = latest_state.get('by_server_protocol_client', {})
+    users_map = {u.get('id'): u for u in data.get('users', [])}
+
+    uc_by_client = {}
+    for uc in data.get('user_connections', []):
+        if uc.get('server_id') == server_id and uc.get('protocol') == protocol:
+            uc_by_client[uc.get('client_id')] = uc
+
+    clients = []
+    for state in by_spc.values():
+        if state.get('server_id') != server_id or state.get('protocol') != protocol:
+            continue
+
+        cid = state.get('client_id', '')
+        uc = uc_by_client.get(cid)
+        assigned_user = ''
+        assigned_user_id = None
+        if uc:
+            assigned_user_id = uc.get('user_id')
+            assigned_user = users_map.get(assigned_user_id, {}).get('username', '')
+
+        clients.append({
+            'clientId': cid,
+            'assigned_user': assigned_user,
+            'assigned_user_id': assigned_user_id,
+            'online': state.get('online'),
+            'userData': {
+                'clientName': state.get('name', ''),
+                'enabled': state.get('enabled', True),
+                'latestHandshake': state.get('latest_handshake', ''),
+                'dataReceived': state.get('rx_human', ''),
+                'dataSent': state.get('tx_human', ''),
+                'dataReceivedBytes': state.get('rx_bytes', 0),
+                'dataSentBytes': state.get('tx_bytes', 0),
+                'current_connections': state.get('current_connections'),
+                'active_ips': state.get('active_ips'),
+            }
+        })
+
+    for uc in data.get('user_connections', []):
+        if uc.get('server_id') != server_id or uc.get('protocol') != protocol:
+            continue
+        cid = uc.get('client_id')
+        if any(c.get('clientId') == cid for c in clients):
+            continue
+        uid = uc.get('user_id')
+        clients.append({
+            'clientId': cid,
+            'assigned_user': users_map.get(uid, {}).get('username', ''),
+            'assigned_user_id': uid,
+            'online': None,
+            'userData': {
+                'clientName': uc.get('name', ''),
+                'enabled': True,
+                'latestHandshake': '',
+                'dataReceived': '',
+                'dataSent': '',
+                'dataReceivedBytes': 0,
+                'dataSentBytes': 0,
+            }
+        })
+
+    return clients
 
 
 def save_data(data):
@@ -718,6 +880,11 @@ async def periodic_background_tasks():
             # --- 1. TRAFFIC SYNC & LIMITS ---
             logger.info("Starting background traffic sync...")
             data = load_data()
+            latest_snapshot = {
+                'updated_at': datetime.now().isoformat(),
+                'by_server_protocol_client': {},
+                'by_connection_id': {},
+            }
             
             conns_by_server = {}
             for uc in data.get('user_connections', []):
@@ -735,6 +902,18 @@ async def periodic_background_tasks():
                         if proto in server.get('protocols', {}):
                             manager = get_protocol_manager(ssh, proto)
                             clients = manager.get_clients(proto)
+
+                            for client in clients:
+                                client_id = client.get('clientId', '')
+                                if not client_id:
+                                    continue
+                                key = f"{sid}:{proto}:{client_id}"
+                                latest_snapshot['by_server_protocol_client'][key] = _extract_client_state(
+                                    sid,
+                                    proto,
+                                    client,
+                                )
+
                             client_bytes = {}
                             for c in clients:
                                 rx = c.get('userData', {}).get('dataReceivedBytes', 0)
@@ -750,6 +929,17 @@ async def periodic_background_tasks():
                     ssh.disconnect()
                 except Exception as e:
                     logger.error(f"Traffic sync err server {sid}: {e}")
+
+            for uc in data.get('user_connections', []):
+                key = f"{uc.get('server_id')}:{uc.get('protocol')}:{uc.get('client_id')}"
+                st = latest_snapshot['by_server_protocol_client'].get(key)
+                if st:
+                    latest_snapshot['by_connection_id'][uc.get('id', '')] = st
+
+            try:
+                save_latest_state(latest_snapshot)
+            except Exception as e:
+                logger.warning(f"Failed to save latest state buffer: {e}")
 
             to_disable_uids = []
             if updates:
@@ -904,6 +1094,7 @@ async def my_connections_page(request: Request):
     if not user:
         return RedirectResponse(url='/login', status_code=302)
     data = load_data()
+    latest_state = load_latest_state()
     conns = [c for c in data.get('user_connections', []) if c['user_id'] == user['id']]
     # Enrich with server names
     for c in conns:
@@ -912,6 +1103,7 @@ async def my_connections_page(request: Request):
             c['server_name'] = data['servers'][sid].get('name', data['servers'][sid].get('host', ''))
         else:
             c['server_name'] = 'Unknown'
+    _attach_latest_state_to_connections(conns, latest_state)
     return tpl(request, 'my_connections.html', connections=conns, servers=data.get('servers', []), max_my_connections=10)
 
 
@@ -1380,21 +1572,49 @@ async def api_get_connections(request: Request, server_id: int, protocol: str = 
         return JSONResponse({'error': 'Forbidden'}, status_code=403)
     try:
         data = load_data()
+        latest_state = load_latest_state()
         if server_id >= len(data['servers']):
             return JSONResponse({'error': 'Server not found'}, status_code=404)
         server = data['servers'][server_id]
-        ssh = get_ssh(server)
-        ssh.connect()
-        manager = get_protocol_manager(ssh, protocol)
-        clients = manager.get_clients(protocol)
-        ssh.disconnect()
+        clients = []
+        source = 'live'
+
+        try:
+            ssh = get_ssh(server)
+            ssh.connect()
+            try:
+                manager = get_protocol_manager(ssh, protocol)
+                clients = manager.get_clients(protocol)
+            finally:
+                ssh.disconnect()
+        except Exception as live_err:
+            logger.warning(f"Live connections fetch failed for server={server_id}, protocol={protocol}: {live_err}")
+            clients = _build_cached_clients_for_server_protocol(data, latest_state, server_id, protocol)
+            source = 'cache'
 
         # Enrich with user info from user_connections
         user_conns = data.get('user_connections', [])
         users = data.get('users', [])
         users_map = {u['id']: u for u in users}
+        by_spc = latest_state.get('by_server_protocol_client', {})
         for client in clients:
             cid = client.get('clientId', '')
+
+            st = by_spc.get(f"{server_id}:{protocol}:{cid}")
+            if st:
+                client['online'] = st.get('online')
+                user_data = client.setdefault('userData', {})
+                if not user_data.get('latestHandshake') and st.get('latest_handshake'):
+                    user_data['latestHandshake'] = st.get('latest_handshake')
+                if not user_data.get('dataReceived') and st.get('rx_human'):
+                    user_data['dataReceived'] = st.get('rx_human')
+                if not user_data.get('dataSent') and st.get('tx_human'):
+                    user_data['dataSent'] = st.get('tx_human')
+                if not user_data.get('dataReceivedBytes'):
+                    user_data['dataReceivedBytes'] = st.get('rx_bytes', 0)
+                if not user_data.get('dataSentBytes'):
+                    user_data['dataSentBytes'] = st.get('tx_bytes', 0)
+
             for uc in user_conns:
                 if uc.get('client_id') == cid and uc.get('server_id') == server_id and uc.get('protocol') == protocol:
                     uid = uc.get('user_id')
@@ -1403,7 +1623,11 @@ async def api_get_connections(request: Request, server_id: int, protocol: str = 
                         client['assigned_user'] = u['username']
                         client['assigned_user_id'] = uid
                     break
-        return {'clients': clients}
+        return {
+            'clients': clients,
+            'source': source,
+            'state_updated_at': latest_state.get('updated_at', ''),
+        }
     except Exception as e:
         logger.exception("Error getting connections")
         return JSONResponse({'error': str(e)}, status_code=500)
@@ -1877,11 +2101,13 @@ async def api_get_user_connections(request: Request, user_id: str):
     if user['role'] == 'user' and user['id'] != user_id:
         return JSONResponse({'error': 'Forbidden'}, status_code=403)
     data = load_data()
+    latest_state = load_latest_state()
     conns = [c for c in data.get('user_connections', []) if c['user_id'] == user_id]
     for c in conns:
         sid = c.get('server_id', 0)
         if sid < len(data['servers']):
             c['server_name'] = data['servers'][sid].get('name', '')
+    _attach_latest_state_to_connections(conns, latest_state)
     return {'connections': conns}
 
 
@@ -1893,6 +2119,7 @@ async def api_my_connections(request: Request):
     if not user:
         return JSONResponse({'error': 'Forbidden'}, status_code=403)
     data = load_data()
+    latest_state = load_latest_state()
     conns = [c for c in data.get('user_connections', []) if c['user_id'] == user['id']]
     for c in conns:
         sid = c.get('server_id', 0)
@@ -1900,6 +2127,7 @@ async def api_my_connections(request: Request):
             c['server_name'] = data['servers'][sid].get('name', '')
         else:
             c['server_name'] = 'Unknown'
+    _attach_latest_state_to_connections(conns, latest_state)
     return {'connections': conns}
 
 
