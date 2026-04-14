@@ -527,6 +527,12 @@ class RenameConnectionRequest(BaseModel):
     name: str
 
 
+class MyAddConnectionRequest(BaseModel):
+    server_id: int
+    protocol: str = 'awg'
+    name: str = 'VPN Connection'
+
+
 class AddUserRequest(BaseModel):
     username: str
     password: str
@@ -906,7 +912,7 @@ async def my_connections_page(request: Request):
             c['server_name'] = data['servers'][sid].get('name', data['servers'][sid].get('host', ''))
         else:
             c['server_name'] = 'Unknown'
-    return tpl(request, 'my_connections.html', connections=conns)
+    return tpl(request, 'my_connections.html', connections=conns, servers=data.get('servers', []), max_my_connections=10)
 
 
 # ======================== AUTH API ========================
@@ -1895,6 +1901,64 @@ async def api_my_connections(request: Request):
         else:
             c['server_name'] = 'Unknown'
     return {'connections': conns}
+
+
+@app.post('/api/my/connections/add')
+async def api_my_add_connection(request: Request, req: MyAddConnectionRequest):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({'error': 'Forbidden'}, status_code=403)
+
+    try:
+        data = load_data()
+        my_conns = [c for c in data.get('user_connections', []) if c.get('user_id') == user['id']]
+        if user.get('role') == 'user' and len(my_conns) >= 10:
+            return JSONResponse({'error': 'Maximum 10 connections per user reached'}, status_code=400)
+
+        if req.server_id < 0 or req.server_id >= len(data.get('servers', [])):
+            return JSONResponse({'error': 'Server not found'}, status_code=404)
+
+        server = data['servers'][req.server_id]
+        protocol = (req.protocol or 'awg').strip()
+        supported_protocols = {'awg', 'awg2', 'awg_legacy', 'xray', 'telemt'}
+        if protocol not in supported_protocols:
+            return JSONResponse({'error': f'Unsupported protocol: {protocol}'}, status_code=400)
+
+        proto_info = server.get('protocols', {}).get(protocol, {})
+        if not proto_info.get('installed'):
+            return JSONResponse({'error': f'Protocol {protocol} is not installed on selected server'}, status_code=400)
+
+        port_default = '443' if protocol == 'telemt' else '55424'
+        port = proto_info.get('port', port_default)
+        conn_name = (req.name or 'VPN Connection').strip() or 'VPN Connection'
+
+        ssh = get_ssh(server)
+        ssh.connect()
+        manager = get_protocol_manager(ssh, protocol)
+        result = manager.add_client(protocol, conn_name, server['host'], port)
+        ssh.disconnect()
+
+        if not result.get('client_id'):
+            return JSONResponse({'error': 'Failed to create connection on server'}, status_code=500)
+
+        new_conn = {
+            'id': str(uuid.uuid4()),
+            'user_id': user['id'],
+            'server_id': req.server_id,
+            'protocol': protocol,
+            'client_id': result['client_id'],
+            'name': conn_name,
+            'created_at': datetime.now().isoformat(),
+        }
+        data['user_connections'].append(new_conn)
+        save_data(data)
+
+        config = result.get('config', '')
+        vpn_link = result.get('vpn_link') or (generate_vpn_link(config) if config else '')
+        return {'status': 'success', 'connection': new_conn, 'config': config, 'vpn_link': vpn_link}
+    except Exception as e:
+        logger.exception("Error creating my connection")
+        return JSONResponse({'error': str(e)}, status_code=500)
 
 
 @app.post('/api/users/{user_id}/share/setup')

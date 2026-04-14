@@ -4,10 +4,22 @@
 
 {% block content %}
 <section>
-    <h1 class="section-title">
-        <span class="icon">🔗</span>
-        {{ _('my_connections_title') }}
-    </h1>
+    <div class="flex items-center justify-between" style="margin-bottom: var(--space-lg); gap: var(--space-md); flex-wrap: wrap;">
+        <h1 class="section-title" style="margin-bottom: 0;">
+            <span class="icon">🔗</span>
+            {{ _('my_connections_title') }}
+        </h1>
+        <div class="flex items-center" style="gap: var(--space-sm);">
+            <span class="badge badge-info" style="font-size: 0.75rem;">
+                {{ connections|length }}/{{ max_my_connections or 10 }}
+            </span>
+            <button class="btn btn-primary btn-sm"
+                onclick="openModal('addMyConnModal')"
+                {% if (connections|length) >= (max_my_connections or 10) %}disabled{% endif %}>
+                ＋ {{ _('add_connection') }}
+            </button>
+        </div>
+    </div>
 
     {% if connections %}
     <div class="clients-list" id="myConnectionsList">
@@ -55,6 +67,42 @@
     </div>
     {% endif %}
 </section>
+
+<!-- ===== Add My Connection Modal ===== -->
+<div class="modal-backdrop" id="addMyConnModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 class="modal-title">{{ _('add_connection') }}</h2>
+            <button class="modal-close" onclick="closeModal('addMyConnModal')">×</button>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">{{ _('server_label') }}</label>
+            <select class="form-select" id="myConnServer" onchange="refreshMyConnProtocols()">
+                {% for s in servers %}
+                <option value="{{ loop.index0 }}">{{ s.name }} ({{ s.host }})</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">{{ _('protocol_label') }}</label>
+            <select class="form-select" id="myConnProtocol"></select>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">{{ _('connection_name') }}</label>
+            <input class="form-input" id="myConnName" type="text" placeholder="{{ _('connection_name_placeholder') }}">
+        </div>
+
+        <div class="form-hint" id="myConnLimitHint" style="margin-bottom: var(--space-sm);"></div>
+
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('addMyConnModal')">{{ _('cancel') }}</button>
+            <button class="btn btn-primary" onclick="createMyConnection()">{{ _('create') }}</button>
+        </div>
+    </div>
+</div>
 
 <!-- ===== Config Modal ===== -->
 <div class="modal-backdrop" id="configModal">
@@ -112,6 +160,71 @@
     let currentConfig = '';
     let currentVpnLink = '';
     let currentConfigName = 'connection';
+    const MY_SERVERS = {{ servers|tojson }};
+    const MY_MAX_CONNECTIONS = {{ max_my_connections or 10 }};
+    const MY_CURRENT_CONNECTIONS = {{ connections|length }};
+
+    function refreshMyConnProtocols() {
+        const serverSelect = document.getElementById('myConnServer');
+        const protocolSelect = document.getElementById('myConnProtocol');
+        const hint = document.getElementById('myConnLimitHint');
+        if (!serverSelect || !protocolSelect) return;
+
+        const sid = parseInt(serverSelect.value, 10);
+        const server = MY_SERVERS[sid] || {};
+        const protocols = server.protocols || {};
+        const allowed = ['awg', 'awg2', 'awg_legacy', 'xray', 'telemt'];
+
+        protocolSelect.innerHTML = '';
+        allowed.forEach((p) => {
+            if (protocols[p] && protocols[p].installed) {
+                const opt = document.createElement('option');
+                opt.value = p;
+                opt.textContent = p === 'awg' ? 'AmneziaWG' : (p === 'awg2' ? 'AmneziaWG 2.0' : (p === 'awg_legacy' ? 'AWG Legacy' : p.toUpperCase()));
+                protocolSelect.appendChild(opt);
+            }
+        });
+
+        if (!protocolSelect.options.length) {
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = _('no_connections');
+            protocolSelect.appendChild(opt);
+        }
+
+        if (hint) {
+            hint.textContent = `${MY_CURRENT_CONNECTIONS}/${MY_MAX_CONNECTIONS}`;
+        }
+    }
+
+    async function createMyConnection() {
+        if (MY_CURRENT_CONNECTIONS >= MY_MAX_CONNECTIONS) {
+            showToast(`${_('error')}: max ${MY_MAX_CONNECTIONS}`, 'error');
+            return;
+        }
+
+        const serverId = parseInt(document.getElementById('myConnServer').value, 10);
+        const protocol = document.getElementById('myConnProtocol').value;
+        const name = (document.getElementById('myConnName').value || '').trim() || 'VPN Connection';
+
+        if (!protocol) {
+            showToast(`${_('error')}: ${_('protocol_label')}`, 'error');
+            return;
+        }
+
+        try {
+            await apiCall('/api/my/connections/add', 'POST', {
+                server_id: serverId,
+                protocol,
+                name,
+            });
+            closeModal('addMyConnModal');
+            showToast(_('settings_saved'), 'success');
+            location.reload();
+        } catch (err) {
+            showToast(`${_('error')}: ` + err.message, 'error');
+        }
+    }
 
     async function showMyConfig(connectionId, name, proto) {
         try {
@@ -195,5 +308,9 @@
             container.innerHTML = `<div style="color:var(--text-muted);font-size:0.85rem;">${_('qr_error')}</div>`;
         }
     }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        refreshMyConnProtocols();
+    });
 </script>
 {% endblock %}
