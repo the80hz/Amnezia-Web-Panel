@@ -253,5 +253,6 @@
     "clear_server": "清除服务器",
     "remove_server": "从面板移除服务器",
     "telemt_desc": "基于 MTProxy 的 Telegram 代理，支持高级混淆。",
-    "dns_desc": "防止广告和保护隐私的个人 DNS 服务器。"
+    "dns_desc": "防止广告和保护隐私的个人 DNS 服务器。",
+    "rename": "重命名"
 }

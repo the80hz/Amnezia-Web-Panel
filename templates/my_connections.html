@@ -34,6 +34,11 @@
                     onclick="showMyConfig('{{ c.id }}', '{{ c.name or 'Connection' }}', '{{ c.protocol }}')">
                     {{ _('show_config') }}
                 </button>
+                <button class="btn btn-secondary btn-sm"
+                    title="{{ _('connection_name') }}"
+                    onclick="renameMyConnection('{{ c.id }}', '{{ c.name or 'Connection' }}')">
+                    {{ _('rename') }}
+                </button>
                 <button class="btn btn-danger btn-sm"
                     onclick="deleteMyConnection('{{ c.id }}', '{{ c.name or 'Connection' }}')">
                     {{ _('delete') }}
@@ -144,6 +149,23 @@
         try {
             await apiCall(`/api/my/connections/${connectionId}/remove`, 'POST');
             showToast(_('connection_deleted'), 'success');
+            location.reload();
+        } catch (err) {
+            showToast(`${_('error')}: ` + err.message, 'error');
+        }
+    }
+
+    async function renameMyConnection(connectionId, currentName) {
+        const newName = prompt(_('connection_name'), currentName || 'VPN Connection');
+        if (newName === null) return;
+        const trimmed = String(newName).trim();
+        if (!trimmed) {
+            showToast(`${_('error')}: ${_('connection_name')}`, 'error');
+            return;
+        }
+        try {
+            await apiCall(`/api/my/connections/${connectionId}/rename`, 'POST', { name: trimmed });
+            showToast(_('save'), 'success');
             location.reload();
         } catch (err) {
             showToast(`${_('error')}: ` + err.message, 'error');

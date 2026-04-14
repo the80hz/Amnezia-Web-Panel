@@ -277,5 +277,6 @@
     "or_paste_text": "OR paste certificate text",
     "cert_text_label": "Certificate content (CRT)",
     "key_text_label": "Private Key content (KEY)",
-    "ssl_hint": "After enabling, the panel will be accessible via https:// on the specified domain. Make sure the file paths or text data are correct."
+    "ssl_hint": "After enabling, the panel will be accessible via https:// on the specified domain. Make sure the file paths or text data are correct.",
+    "rename": "Rename"
 }

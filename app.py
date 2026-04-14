@@ -523,6 +523,10 @@ class ToggleConnectionRequest(BaseModel):
     enable: bool = True
 
 
+class RenameConnectionRequest(BaseModel):
+    name: str
+
+
 class AddUserRequest(BaseModel):
     username: str
     password: str
@@ -2079,6 +2083,82 @@ async def api_my_remove_connection(request: Request, connection_id: str):
         return {'status': 'success'}
     except Exception as e:
         logger.exception("Error removing my connection")
+        return JSONResponse({'error': str(e)}, status_code=500)
+
+
+@app.post('/api/my/connections/{connection_id}/rename')
+async def api_my_rename_connection(request: Request, connection_id: str, req: RenameConnectionRequest):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({'error': 'Forbidden'}, status_code=403)
+
+    new_name = (req.name or '').strip()
+    if not new_name:
+        return JSONResponse({'error': 'Name is required'}, status_code=400)
+
+    try:
+        data = load_data()
+        conn = next(
+            (c for c in data.get('user_connections', []) if c['id'] == connection_id and c['user_id'] == user['id']),
+            None
+        )
+        if not conn:
+            return JSONResponse({'error': 'Connection not found'}, status_code=404)
+
+        old_name = conn.get('name', '')
+        conn['name'] = new_name
+
+        # Best-effort update of remote metadata (clientsTable) for protocols that store display names.
+        sid = conn.get('server_id', -1)
+        if 0 <= sid < len(data.get('servers', [])):
+            server = data['servers'][sid]
+            proto = conn.get('protocol', 'awg')
+            client_id = conn.get('client_id', '')
+            ssh = get_ssh(server)
+            try:
+                ssh.connect()
+                manager = get_protocol_manager(ssh, proto)
+
+                if proto in ('awg', 'awg2', 'awg_legacy'):
+                    table = manager._get_clients_table(proto)
+                    changed = False
+                    for item in table:
+                        if item.get('clientId') == client_id:
+                            ud = item.setdefault('userData', {})
+                            ud['clientName'] = new_name
+                            changed = True
+                            break
+                    if changed:
+                        manager._save_clients_table(proto, table)
+
+                elif proto == 'xray':
+                    table = manager._get_clients_table()
+                    changed = False
+                    for item in table:
+                        if item.get('clientId') == client_id:
+                            ud = item.setdefault('userData', {})
+                            ud['clientName'] = new_name
+                            changed = True
+                            break
+                    if changed:
+                        manager._save_clients_table(table)
+
+            except Exception as e:
+                logger.info(
+                    "My connection rename: remote metadata update skipped (%s) for connection %s",
+                    e,
+                    connection_id,
+                )
+            finally:
+                try:
+                    ssh.disconnect()
+                except Exception:
+                    pass
+
+        save_data(data)
+        return {'status': 'success', 'name': new_name, 'old_name': old_name}
+    except Exception as e:
+        logger.exception("Error renaming my connection")
         return JSONResponse({'error': str(e)}, status_code=500)
 
 
