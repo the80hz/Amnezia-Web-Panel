@@ -251,13 +251,22 @@ async def _handle_get_config(
 
         def _get_cfg():
             ssh.connect()
-            if proto == "xray":
-                mgr = XrayManager(ssh)
-            else:
-                mgr = AWGManager(ssh)
-            cfg = mgr.get_client_config(proto, conn["client_id"], server["host"], port)
-            ssh.disconnect()
-            return cfg
+            try:
+                if proto == "xray":
+                    mgr = XrayManager(ssh)
+                else:
+                    mgr = AWGManager(ssh)
+                return mgr.get_client_config(proto, conn["client_id"], server["host"], port)
+            except RuntimeError as e:
+                # Imported legacy profiles may not have private key on server.
+                # In that case serve locally stored imported config.
+                if "private key not stored" in str(e).lower():
+                    imported_cfg = conn.get("imported_config", "")
+                    if imported_cfg:
+                        return imported_cfg
+                raise
+            finally:
+                ssh.disconnect()
 
         config = await asyncio.to_thread(_get_cfg)
 
