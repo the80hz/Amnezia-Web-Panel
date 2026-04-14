@@ -12,7 +12,7 @@
     {% if connections %}
     <div class="clients-list" id="myConnectionsList">
         {% for c in connections %}
-        <div class="client-item">
+        <div class="client-item" id="my-conn-{{ c.id }}">
             <div class="client-info">
                 <div class="client-avatar">🔗</div>
                 <div>
@@ -33,6 +33,10 @@
                 <button class="btn btn-primary btn-sm"
                     onclick="showMyConfig('{{ c.id }}', '{{ c.name or 'Connection' }}', '{{ c.protocol }}')">
                     {{ _('show_config') }}
+                </button>
+                <button class="btn btn-danger btn-sm"
+                    onclick="deleteMyConnection('{{ c.id }}', '{{ c.name or 'Connection' }}')">
+                    {{ _('delete') }}
                 </button>
             </div>
         </div>
@@ -130,6 +134,17 @@
                 openModal('configModal');
                 generateQR(result.config);
             }
+        } catch (err) {
+            showToast(`${_('error')}: ` + err.message, 'error');
+        }
+    }
+
+    async function deleteMyConnection(connectionId, name) {
+        if (!confirm(_('delete_connection_confirm'))) return;
+        try {
+            await apiCall(`/api/my/connections/${connectionId}/remove`, 'POST');
+            showToast(_('connection_deleted'), 'success');
+            location.reload();
         } catch (err) {
             showToast(`${_('error')}: ` + err.message, 'error');
         }

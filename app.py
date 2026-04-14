@@ -2037,6 +2037,51 @@ async def api_my_connection_config(request: Request, connection_id: str):
         return JSONResponse({'error': str(e)}, status_code=500)
 
 
+@app.post('/api/my/connections/{connection_id}/remove')
+async def api_my_remove_connection(request: Request, connection_id: str):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({'error': 'Forbidden'}, status_code=403)
+    try:
+        data = load_data()
+        conn = next(
+            (c for c in data.get('user_connections', []) if c['id'] == connection_id and c['user_id'] == user['id']),
+            None
+        )
+        if not conn:
+            return JSONResponse({'error': 'Connection not found'}, status_code=404)
+
+        sid = conn.get('server_id', -1)
+        if sid < 0 or sid >= len(data.get('servers', [])):
+            return JSONResponse({'error': 'Server not found'}, status_code=404)
+
+        server = data['servers'][sid]
+
+        # Best effort remote delete for user's own profile.
+        # If peer is already absent on server, remove local link anyway.
+        ssh = get_ssh(server)
+        try:
+            ssh.connect()
+            manager = get_protocol_manager(ssh, conn.get('protocol', 'awg'))
+            manager.remove_client(conn.get('protocol', 'awg'), conn.get('client_id', ''))
+        except Exception as e:
+            if 'not found' not in str(e).lower():
+                raise
+            logger.info("My connection remove: remote peer already missing, removing local link: %s", connection_id)
+        finally:
+            try:
+                ssh.disconnect()
+            except Exception:
+                pass
+
+        data['user_connections'] = [c for c in data.get('user_connections', []) if c.get('id') != connection_id]
+        save_data(data)
+        return {'status': 'success'}
+    except Exception as e:
+        logger.exception("Error removing my connection")
+        return JSONResponse({'error': str(e)}, status_code=500)
+
+
 @app.get('/settings')
 async def settings_page(request: Request):
     user = _check_admin(request)
