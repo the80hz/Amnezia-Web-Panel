@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import logging
+import errno
 import base64
 import hashlib
 import secrets
@@ -127,7 +128,24 @@ def save_latest_state(state):
     tmp_file = f"{LATEST_STATE_FILE}.tmp"
     with open(tmp_file, 'w', encoding='utf-8') as f:
         json.dump(state, f, indent=2, ensure_ascii=False)
-    os.replace(tmp_file, LATEST_STATE_FILE)
+        f.flush()
+        os.fsync(f.fileno())
+
+    try:
+        os.replace(tmp_file, LATEST_STATE_FILE)
+    except OSError as e:
+        # On some Docker bind mounts atomic replace may fail with EBUSY/EXDEV.
+        # Fall back to direct write so background sync keeps working.
+        if e.errno not in (errno.EBUSY, errno.EXDEV):
+            raise
+        with open(LATEST_STATE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.remove(tmp_file)
+        except OSError:
+            pass
 
 
 def _safe_int(value, default=0):
