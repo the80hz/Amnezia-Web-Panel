@@ -66,6 +66,25 @@ def norm_handle(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", v)
 
 
+def user_matches_filter(data: dict, user_id: str, only_user: str) -> bool:
+    """Match specific user by panel user id, username, or telegramId."""
+    wanted_raw = (only_user or "").strip()
+    if not wanted_raw:
+        return True
+
+    wanted_norm = norm_handle(wanted_raw)
+    if user_id == wanted_raw:
+        return True
+
+    user = find_user_obj(data, user_id)
+    if not user:
+        return False
+
+    username = str(user.get("username", "") or "")
+    telegram_id = str(user.get("telegramId", "") or "")
+    return norm_handle(username) == wanted_norm or norm_handle(telegram_id) == wanted_norm
+
+
 def parse_conf(conf_path: Path) -> Optional[ParsedProfile]:
     text = conf_path.read_text(encoding="utf-8", errors="ignore")
 
@@ -372,6 +391,10 @@ def run(args: argparse.Namespace) -> None:
                 print(f"SKIP user not found for tg '{p.tg_username}' (file: {p.path})")
                 continue
 
+        if args.only_user and not user_matches_filter(data, user_id, args.only_user):
+            skipped += 1
+            continue
+
         added, _ = upsert_connection(
             data=data,
             user_id=user_id,
@@ -430,6 +453,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--panel-data", default="./data.json", help="Path to panel data.json")
     p.add_argument("--panel-server", default="", help="Panel server name/host in data.json (defaults to --server)")
     p.add_argument("--protocol", default="awg", choices=["awg", "awg2", "awg_legacy"], help="Protocol for imported links")
+    p.add_argument(
+        "--only-user",
+        default="",
+        help="Import only one specific panel user (match by user id, username, or telegramId)",
+    )
     p.add_argument("--create-missing-users", action="store_true", help="Create panel users for missing Telegram usernames")
     p.add_argument(
         "--store-imported-config",

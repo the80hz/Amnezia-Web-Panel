@@ -32,6 +32,8 @@ coverage.xml
 data.json
 data.json.bak
 data/
+data_old/
+data_new/
 .DS_Store
 
 # IDEs
