@@ -183,6 +183,30 @@
             </button>
         </div>
     </div>
+
+    <!-- WireGuard Card -->
+    <div class="card card-hover protocol-card protocol-wireguard" id="proto-wireguard">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-sm);">
+            <div class="protocol-icon">🔒</div>
+            <div class="flex gap-sm" id="wireguard-ctrl" style="display:none!important;"></div>
+        </div>
+        <div class="protocol-name">WireGuard</div>
+        <div class="protocol-desc">
+            {{ _('wireguard_desc') }}
+        </div>
+        <div class="protocol-status" id="wireguard-status">
+            <span class="badge badge-warn"><span class="badge-dot"></span> {{ _('not_checked') }}</span>
+        </div>
+        <div id="wireguard-info" class="hidden">
+            <div class="protocol-info" id="wireguard-info-grid"></div>
+        </div>
+        <div class="flex gap-sm" id="wireguard-actions">
+            <button class="btn btn-primary btn-sm" onclick="openInstallModal('wireguard')" id="wireguard-install-btn"
+                style="flex:1">
+                {{ _('install') }}
+            </button>
+        </div>
+    </div>
 </div>
 
 <div class="protocol-cards hidden" id="services-grid">
@@ -249,6 +273,7 @@
                 <option value="awg_legacy">AWG Legacy</option>
                 <option value="xray">Xray</option>
                 <option value="telemt">Telemt</option>
+                <option value="wireguard">WireGuard</option>
             </select>
             <button class="btn btn-primary btn-sm" onclick="openAddConnectionModal()">
                 <span>＋</span> {{ _('add') }}
@@ -358,6 +383,18 @@
 
         <div id="telemtConnOptions"
             style="display:none; padding: var(--space-md); background: rgba(0,0,0,0.03); border-radius: var(--radius-md); margin-bottom: var(--space-md);">
+            <div class="form-group">
+                <label class="form-label">Secret (Hex 32 chars)</label>
+                <input class="form-input" type="text" id="telemtSecret" placeholder="Optional (auto-generated if empty)">
+            </div>
+            <div class="form-group">
+                <label class="form-label">AD Tag (Hex 32 chars)</label>
+                <input class="form-input" type="text" id="telemtAdTag" placeholder="Optional">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Max TCP Conns</label>
+                <input class="form-input" type="number" id="telemtMaxConns" placeholder="Optional (e.g. 1000)" min="0">
+            </div>
             <div class="form-group">
                 <label class="form-label">Quota (Bytes)</label>
                 <input class="form-input" type="number" id="telemtQuota" placeholder="Optional (e.g. 1073741824)"
@@ -513,6 +550,7 @@
             case 'awg_legacy': return 'AWG Legacy';
             case 'xray': return 'Xray';
             case 'telemt': return 'Telemt';
+            case 'wireguard': return 'WireGuard';
             case 'dns': return 'AmneziaDNS';
             default: return proto;
         }
@@ -566,7 +604,7 @@
 
                 for (const [proto, info] of Object.entries(data.protocols)) {
                     updateProtocolCard(proto, info);
-                    const isVPN = ['awg', 'awg2', 'awg_legacy', 'xray', 'telemt'].includes(proto);
+                    const isVPN = ['awg', 'awg2', 'awg_legacy', 'xray', 'telemt', 'wireguard'].includes(proto);
                     if (info.container_running && isVPN) {
                         const opt = document.createElement('option');
                         opt.value = proto;
@@ -607,7 +645,7 @@
     }
 
     function updateStatusCounts(protocols) {
-        const protos = ['awg', 'awg2', 'awg_legacy', 'xray', 'telemt'];
+        const protos = ['awg', 'awg2', 'awg_legacy', 'xray', 'telemt', 'wireguard'];
         const servs = ['dns'];
 
         let pRunning = 0, pTotal = protos.length;
@@ -1020,6 +1058,9 @@
                 params.telemt_quota = document.getElementById('telemtQuota').value || null;
                 params.telemt_max_ips = parseInt(document.getElementById('telemtMaxIps').value) || null;
                 params.telemt_expiry = document.getElementById('telemtExpiry').value || null;
+                params.telemt_secret = document.getElementById('telemtSecret').value || null;
+                params.telemt_ad_tag = document.getElementById('telemtAdTag').value || null;
+                params.telemt_max_conns = parseInt(document.getElementById('telemtMaxConns').value) || null;
                 if (isEditingConn) params.client_id = editingClientId;
             }
             const result = await apiCall(isEditingConn ? `/api/servers/${SERVER_ID}/connections/edit` : `/api/servers/${SERVER_ID}/connections/add`, 'POST', params);
@@ -1071,12 +1112,18 @@
             if (isEdit && clientData) {
                 editingClientId = clientData.clientName;
                 document.getElementById('telemtQuota').value = clientData.quota || '';
-                document.getElementById('telemtMaxIps').value = clientData.active_ips || ''; // actually max_ips isn't stored in api data yet, assume it was active_ips for now or better - just empty
+                document.getElementById('telemtMaxIps').value = ''; 
                 document.getElementById('telemtExpiry').value = clientData.expiry || '';
+                document.getElementById('telemtSecret').value = clientData.token || '';
+                document.getElementById('telemtAdTag').value = clientData.user_ad_tag || '';
+                document.getElementById('telemtMaxConns').value = clientData.max_tcp_conns || '';
             } else {
                 document.getElementById('telemtQuota').value = '';
                 document.getElementById('telemtMaxIps').value = '';
                 document.getElementById('telemtExpiry').value = '';
+                document.getElementById('telemtSecret').value = '';
+                document.getElementById('telemtAdTag').value = '';
+                document.getElementById('telemtMaxConns').value = '';
             }
         } else {
             telemtOpts.style.display = 'none';

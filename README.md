@@ -17,25 +17,6 @@ A modern, high-performance web interface for simplified management of AmneziaWG 
 >
 > ⚡ **After verification, you can manage the server directly from the panel!**
 
-## ⚠️ Legal Notice
-
-> **This project is created solely for educational and research purposes.**
->
-> **This project has never been intended for use in jurisdictions where the technologies employed are prohibited.** The author bears no responsibility for any unlawful use of this software.
-
-**This project merely adds an abstraction layer for managing publicly available applications.** All applications belong to their respective owners. This project does not claim ownership over, nor does it modify, any third-party applications.
-
-The use of traffic obfuscation tools may violate the laws of your country. Only use this software for lawful purposes, such as:
-
-- **Penetration testing and security research**
-- **CTF (Capture The Flag) competitions**
-- **Academic and scientific research**
-- **Testing and securing your own networks**
-- **Improving defensive security measures**
-- **Educational training in cybersecurity**
-
-> **Nothing in this project constitutes an incitement to violate any applicable laws.**
-
 ![Servers Dashboard](https://github.com/PRVTPRO/Amnezia-Web-Panel/blob/main/screen/panel1.png)
 
 
@@ -61,12 +42,14 @@ Configuration panel for system parameters and preferences:
 
 *   **⚡ Multi-Protocol Support**:
     *   **AmneziaWG**: Advanced WireGuard-based protocol with S3/S4 obfuscation to bypass deep packet inspection (DPI).
-    *   **Xray (XTLS-Reality)**: Stealthy protocol that masks VPN traffic as standard HTTPS browsing.
+    *   **Classic WireGuard**: Standard, high-performance WireGuard protocol for unmatched speed and broad device compatibility with traffic monitoring support.
+    *   **Xray (XTLS-Reality)**: Stealthy protocol that masks VPN traffic as standard HTTPS browsing. Supports dynamic SNI mapping configuration overrides.
     *   **Telemt (Telegram Proxy)**: High-performance Telegram MTProxy with TLS emulation and comprehensive management (quotas, IP limits, and real-time session tracking).
     *   **AmneziaDNS**: Internal DNS resolver overriding default behavior to prevent DNS leaks and blockings.
 *   **⚙️ Core Server Management**:
     *   Reboot servers and perform full Amnezia software cleanup directly from the UI.
     *   Lightning-fast, strictly concurrent protocol status polling for immediate feedback.
+    *   **Asynchronous Processing**: Resilient, non-blocking background architecture prevents the UI panel from freezing, even if remote endpoints hang.
 *   **🌐 Internationalization (i18n)**:
     *   Full support for **English**, **Russian**, **French**, **Chinese**, and **Persian**.
     *   Native **RTL (Right-to-Left)** support for Persian language.
@@ -81,6 +64,9 @@ Configuration panel for system parameters and preferences:
 *   **🤖 Telegram Bot Integration**:
     *   Notify users about new connections or limits.
     *   Integrated management via Telegram commands.
+*   **🔄 Built-in Update Checker**:
+    *   View your current panel version directly in Settings.
+    *   One-click check for fresh GitHub releases to stay up to date.
 *   **📤 Data Interoperability**:
     *   **Remnawave Sync**: Automatically import and sync users from Remnawave.
     *   **Simple Backup**: Effortless JSON-based export and restore of all panel data.

@@ -771,6 +771,11 @@ a:hover {
     color: var(--success);
 }
 
+.protocol-wireguard .protocol-icon {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(52, 211, 153, 0.1));
+    color: #10b981;
+}
+
 .protocol-name {
     font-size: 1.1rem;
     font-weight: 700;

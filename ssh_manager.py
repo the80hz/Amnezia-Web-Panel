@@ -193,9 +193,18 @@ class SSHManager:
 
         logger.info(f"Running command: {command[:100]}...")
         stdin, stdout, stderr = self.client.exec_command(command, timeout=timeout)
-        exit_code = stdout.channel.recv_exit_status()
-        out = stdout.read().decode('utf-8', errors='replace').strip()
-        err = stderr.read().decode('utf-8', errors='replace').strip()
+        
+        # Crucial: set timeout on the channel to prevent hanging indefinitely
+        stdout.channel.settimeout(timeout)
+        stderr.channel.settimeout(timeout)
+        
+        try:
+            exit_code = stdout.channel.recv_exit_status()
+            out = stdout.read().decode('utf-8', errors='replace').strip()
+            err = stderr.read().decode('utf-8', errors='replace').strip()
+        except Exception as e:
+            logger.error(f"Command timed out or failed to read: {e}")
+            out, err, exit_code = "", str(e), -1
 
         if exit_code != 0:
             logger.warning(f"Command exited with code {exit_code}: {err}")

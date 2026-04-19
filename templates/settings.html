@@ -280,6 +280,31 @@
                 {{ _('restore_confirm') }}
             </p>
         </div>
+
+        <!-- BLOCK: About & Updates -->
+        <div class="card" style="margin-top: var(--space-lg);">
+            <h3 class="card-title" style="margin-bottom: var(--space-lg);">ℹ️ {{ _('about_title') }}</h3>
+            <div style="display: flex; flex-direction: column; gap: var(--space-md);">
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: var(--space-sm) 0; border-bottom: 1px solid var(--border-color);">
+                    <span style="font-weight: 500;">{{ _('current_version') }}</span>
+                    <span class="badge badge-info" id="currentVersionBadge" style="font-size: 0.95rem;">{{ current_version }}</span>
+                </div>
+                
+                <div id="updateStatus" class="hidden" style="padding: var(--space-md); border-radius: var(--radius-md); background: var(--bg-primary); text-align: center;">
+                    <!-- Updated via JS -->
+                </div>
+
+                <div style="display: flex; gap: var(--space-sm); margin-top: var(--space-sm);">
+                    <button type="button" class="btn btn-secondary" onclick="checkForUpdates()" id="checkUpdateBtn" style="flex:1;">
+                        <span id="checkUpdateBtnText">🔄 {{ _('check_updates') }}</span>
+                        <div class="spinner hidden" id="checkUpdateSpinner" style="width:14px; height:14px;"></div>
+                    </button>
+                    <a href="https://github.com/PRVTPRO/Amnezia-Web-Panel/releases" target="_blank" class="btn btn-primary hidden" id="downloadUpdateBtn" style="flex:1; text-decoration: none; justify-content: center;">
+                        ⬇️ {{ _('download_update') }}
+                    </a>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -516,6 +541,47 @@
     // Init protocols on load
     if (document.getElementById('syncCreateConns').checked) {
         updateProtocolsForSync();
+    }
+
+    async function checkForUpdates() {
+        const btn = document.getElementById('checkUpdateBtn');
+        const text = document.getElementById('checkUpdateBtnText');
+        const spinner = document.getElementById('checkUpdateSpinner');
+        const statusDiv = document.getElementById('updateStatus');
+        const downloadBtn = document.getElementById('downloadUpdateBtn');
+        
+        btn.disabled = true;
+        text.textContent = "{{ _('checking_updates')|default('Checking...') }}";
+        spinner.classList.remove('hidden');
+        statusDiv.classList.add('hidden');
+        downloadBtn.classList.add('hidden');
+
+        try {
+            const response = await fetch('https://api.github.com/repos/PRVTPRO/Amnezia-Web-Panel/releases/latest');
+            if (!response.ok) throw new Error('API Error');
+            const data = await response.json();
+            
+            const latestVersion = data.tag_name;
+            const currentVersion = '{{ current_version }}';
+            
+            statusDiv.classList.remove('hidden');
+            
+            if (latestVersion !== currentVersion && latestVersion) {
+                statusDiv.innerHTML = `<span style="color: var(--success); font-weight: bold;">{{ _('update_available')|default('Update available') }}: ${latestVersion}</span>`;
+                statusDiv.style.border = '1px solid var(--success)';
+                downloadBtn.href = data.html_url;
+                downloadBtn.classList.remove('hidden');
+            } else {
+                statusDiv.innerHTML = `<span style="color: var(--text-muted);">{{ _('up_to_date')|default('Up to date') }}</span>`;
+                statusDiv.style.border = '1px solid var(--border-color)';
+            }
+        } catch (err) {
+            showToast('Failed to check for updates: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+            text.textContent = "🔄 {{ _('check_updates')|default('Check for updates') }}";
+            spinner.classList.add('hidden');
+        }
     }
 </script>
 {% endblock %}

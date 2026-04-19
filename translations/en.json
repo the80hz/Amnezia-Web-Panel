@@ -74,6 +74,7 @@
     "awg_desc": "A newer version of the protocol based on awg-go. Supports advanced obfuscation with S3, S4 parameters.",
     "awg_legacy_desc": "Original AWG version based on WireGuard kernel. Compatible with older client versions.",
     "xray_desc": "Modern protocol that masks traffic as regular web traffic (XTLS-Reality). Resistant to deep packet analysis.",
+    "wireguard_desc": "Standard and fastest VPN protocol. Supported natively on all modern OS, but easily detected by DPI.",
     "not_checked": "Not checked",
     "connections": "Connections",
     "add": "Add",
@@ -282,5 +283,12 @@
     "cert_text_label": "Certificate content (CRT)",
     "key_text_label": "Private Key content (KEY)",
     "ssl_hint": "After enabling, the panel will be accessible via https:// on the specified domain. Make sure the file paths or text data are correct.",
-    "rename": "Rename"
+    "rename": "Rename",
+    "about_title": "About & Updates",
+    "current_version": "Current version",
+    "check_updates": "Check for updates",
+    "checking_updates": "Checking...",
+    "update_available": "New version available",
+    "download_update": "Download update",
+    "up_to_date": "You have the latest version"
 }

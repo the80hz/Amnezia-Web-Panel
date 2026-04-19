@@ -28,6 +28,7 @@ except ImportError:
 from ssh_manager import SSHManager
 from awg_manager import AWGManager
 from xray_manager import XrayManager
+from wireguard_manager import WireGuardManager
 import telegram_bot as tg_bot
 
 # Configure logging
@@ -48,6 +49,7 @@ else:
 
 DATA_FILE = os.path.join(application_path, 'data.json')
 LATEST_STATE_FILE = os.path.join(application_path, 'latest_state.json')
+CURRENT_VERSION = "v1.4.2"
 
 
 # ======================== Translations ========================
@@ -349,8 +351,19 @@ def get_protocol_manager(ssh, protocol: str):
     elif protocol == 'dns':
         from dns_manager import DNSManager
         return DNSManager(ssh)
+    elif protocol == 'wireguard':
+        from wireguard_manager import WireGuardManager
+        return WireGuardManager(ssh)
     from awg_manager import AWGManager
     return AWGManager(ssh)
+
+
+def _manager_call(manager, method, protocol, *args, **kwargs):
+    """Unified call: WireGuard manager methods don't take protocol_type argument."""
+    fn = getattr(manager, method)
+    if isinstance(manager, WireGuardManager):
+        return fn(*args, **kwargs)
+    return fn(protocol, *args, **kwargs)
 
 
 def generate_vpn_link(config_text):
@@ -401,7 +414,7 @@ async def perform_delete_user(data: dict, user_id: str):
                 ssh = get_ssh(server)
                 ssh.connect()
                 manager = get_protocol_manager(ssh, uc['protocol'])
-                manager.remove_client(uc['protocol'], uc['client_id'])
+                _manager_call(manager, 'remove_client', uc['protocol'], uc['client_id'])
                 ssh.disconnect()
         except Exception as e:
             logger.warning(f"Failed to remove connection {uc['client_id']} during user delete: {e}")
@@ -453,7 +466,7 @@ async def perform_mass_operations(delete_uids: List[str] = None, toggle_uids: Li
             # 1. Deletes
             for c in ops['delete']:
                 manager = get_protocol_manager(ssh, c['protocol'])
-                await asyncio.to_thread(manager.remove_client, c['protocol'], c['client_id'])
+                await asyncio.to_thread(_manager_call, manager, 'remove_client', c['protocol'], c['client_id'])
                 # Incremental delete from data
                 async with DATA_LOCK:
                     current_data = load_data()
@@ -463,7 +476,7 @@ async def perform_mass_operations(delete_uids: List[str] = None, toggle_uids: Li
             # 2. Toggles
             for c, enabled in ops['toggle']:
                 manager = get_protocol_manager(ssh, c['protocol'])
-                await asyncio.to_thread(manager.toggle_client, c['protocol'], c['client_id'], enabled)
+                await asyncio.to_thread(_manager_call, manager, 'toggle_client', c['protocol'], c['client_id'], enabled)
                 # Incremental toggle in data
                 async with DATA_LOCK:
                     current_data = load_data()
@@ -477,7 +490,11 @@ async def perform_mass_operations(delete_uids: List[str] = None, toggle_uids: Li
                 proto_info = srv.get('protocols', {}).get(c_req['protocol'], {})
                 port = proto_info.get('port', '55424')
                 manager = get_protocol_manager(ssh, c_req['protocol'])
-                res = await asyncio.to_thread(manager.add_client, c_req['protocol'], c_req['name'], srv['host'], port)
+                
+                if c_req['protocol'] == 'wireguard':
+                    res = await asyncio.to_thread(manager.add_client, c_req['name'], srv['host'])
+                else:
+                    res = await asyncio.to_thread(_manager_call, manager, 'add_client', c_req['protocol'], c_req['name'], srv['host'], port)
                 
                 if res.get('client_id'):
                     new_conn = {
@@ -714,6 +731,9 @@ class AddConnectionRequest(BaseModel):
     telemt_quota: Optional[str] = None
     telemt_max_ips: Optional[int] = None
     telemt_expiry: Optional[str] = None
+    telemt_secret: Optional[str] = None
+    telemt_ad_tag: Optional[str] = None
+    telemt_max_conns: Optional[int] = None
 
 
 class EditConnectionRequest(BaseModel):
@@ -722,6 +742,9 @@ class EditConnectionRequest(BaseModel):
     telemt_quota: Optional[str] = None
     telemt_max_ips: Optional[int] = None
     telemt_expiry: Optional[str] = None
+    telemt_secret: Optional[str] = None
+    telemt_ad_tag: Optional[str] = None
+    telemt_max_conns: Optional[int] = None
 
 
 class ConnectionActionRequest(BaseModel):
@@ -758,6 +781,12 @@ class AddUserRequest(BaseModel):
     protocol: Optional[str] = None
     connection_name: Optional[str] = None
     expiration_date: Optional[str] = None
+    telemt_quota: Optional[str] = None
+    telemt_max_ips: Optional[int] = None
+    telemt_expiry: Optional[str] = None
+    telemt_secret: Optional[str] = None
+    telemt_ad_tag: Optional[str] = None
+    telemt_max_conns: Optional[int] = None
 
 
 
@@ -832,6 +861,9 @@ class AddUserConnectionRequest(BaseModel):
     telemt_quota: Optional[str] = None
     telemt_max_ips: Optional[int] = None
     telemt_expiry: Optional[str] = None
+    telemt_secret: Optional[str] = None
+    telemt_ad_tag: Optional[str] = None
+    telemt_max_conns: Optional[int] = None
 
 
 class ShareSetupRequest(BaseModel):
@@ -920,6 +952,42 @@ async def startup():
         tg_bot.launch_bot(tg_cfg['token'], load_data, generate_vpn_link)
 
 
+def _scrape_server_traffic(server, sid, my_conns):
+    server_updates = []
+    latest_states = {}
+    try:
+        ssh = get_ssh(server)
+        ssh.connect()
+        for proto in ['awg', 'awg2', 'awg_legacy', 'xray', 'telemt', 'wireguard']:
+            if proto in server.get('protocols', {}):
+                manager = get_protocol_manager(ssh, proto)
+                clients = _manager_call(manager, 'get_clients', proto)
+
+                for client in clients:
+                    client_id = client.get('clientId', '')
+                    if not client_id:
+                        continue
+                    key = f"{sid}:{proto}:{client_id}"
+                    latest_states[key] = _extract_client_state(sid, proto, client)
+
+                client_bytes = {}
+                for c in clients:
+                    rx = c.get('userData', {}).get('dataReceivedBytes', 0)
+                    tx = c.get('userData', {}).get('dataSentBytes', 0)
+                    client_bytes[c.get('clientId')] = rx + tx
+                    
+                for uc in my_conns:
+                    if uc['protocol'] == proto and uc['client_id'] in client_bytes:
+                        curr_bytes = client_bytes[uc['client_id']]
+                        last_bytes = uc.get('last_bytes', 0)
+                        delta = curr_bytes - last_bytes if curr_bytes >= last_bytes else curr_bytes
+                        server_updates.append((uc['id'], delta, curr_bytes))
+        ssh.disconnect()
+    except Exception as e:
+        logger.error(f"Traffic sync err server {sid}: {e}")
+    return server_updates, latest_states
+
+
 async def periodic_background_tasks():
     """Background task to sync traffic limits and Remnawave every 10 minutes"""
     while True:
@@ -945,40 +1013,17 @@ async def periodic_background_tasks():
             
             for sid, server in enumerate(data.get('servers', [])):
                 if sid not in conns_by_server: continue
-                try:
-                    ssh = get_ssh(server)
-                    ssh.connect()
-                    for proto in ['awg', 'awg2', 'awg_legacy', 'xray', 'telemt']:
-                        if proto in server.get('protocols', {}):
-                            manager = get_protocol_manager(ssh, proto)
-                            clients = manager.get_clients(proto)
-
-                            for client in clients:
-                                client_id = client.get('clientId', '')
-                                if not client_id:
-                                    continue
-                                key = f"{sid}:{proto}:{client_id}"
-                                latest_snapshot['by_server_protocol_client'][key] = _extract_client_state(
-                                    sid,
-                                    proto,
-                                    client,
-                                )
-
-                            client_bytes = {}
-                            for c in clients:
-                                rx = c.get('userData', {}).get('dataReceivedBytes', 0)
-                                tx = c.get('userData', {}).get('dataSentBytes', 0)
-                                client_bytes[c.get('clientId')] = rx + tx
-                                
-                            for uc in conns_by_server[sid]:
-                                if uc['protocol'] == proto and uc['client_id'] in client_bytes:
-                                    curr_bytes = client_bytes[uc['client_id']]
-                                    last_bytes = uc.get('last_bytes', 0)
-                                    delta = curr_bytes - last_bytes if curr_bytes >= last_bytes else curr_bytes
-                                    updates.append((uc['id'], delta, curr_bytes))
-                    ssh.disconnect()
-                except Exception as e:
-                    logger.error(f"Traffic sync err server {sid}: {e}")
+                # Run the blocking SSH traffic scraping in a background thread!
+                server_updates, server_states = await asyncio.to_thread(
+                    _scrape_server_traffic,
+                    server,
+                    sid,
+                    conns_by_server[sid],
+                )
+                if server_updates:
+                    updates.extend(server_updates)
+                if server_states:
+                    latest_snapshot['by_server_protocol_client'].update(server_states)
 
             for uc in data.get('user_connections', []):
                 key = f"{uc.get('server_id')}:{uc.get('protocol')}:{uc.get('client_id')}"
@@ -1397,14 +1442,13 @@ async def api_check_server(request: Request, server_id: int):
         if 'protocols' not in server:
             server['protocols'] = {}
 
-        for proto in ['awg', 'awg2', 'awg_legacy', 'xray', 'telemt', 'dns']:
+        for proto in ['awg', 'awg2', 'awg_legacy', 'xray', 'telemt', 'dns', 'wireguard']:
             try:
                 p_manager = get_protocol_manager(ssh, proto)
-                result = p_manager.get_server_status(proto)
+                result = _manager_call(p_manager, 'get_server_status', proto)
                 db_proto = server.get('protocols', {}).get(proto, {})
                 if not result.get('port') and db_proto.get('port'):
                     result['port'] = db_proto['port']
-
                 status['protocols'][proto] = result
                 if result.get('container_exists'):
                     if proto not in server['protocols']:
@@ -1444,7 +1488,7 @@ async def api_install_protocol(request: Request, server_id: int, req: InstallPro
         data = load_data()
         if server_id >= len(data['servers']):
             return JSONResponse({'error': 'Server not found'}, status_code=404)
-        if req.protocol not in ['awg', 'awg2', 'awg_legacy', 'xray', 'telemt', 'dns']:
+        if req.protocol not in ['awg', 'awg2', 'awg_legacy', 'xray', 'telemt', 'dns', 'wireguard']:
             return JSONResponse({'error': 'Invalid protocol type'}, status_code=400)
         
         server = data['servers'][server_id]
@@ -1462,6 +1506,8 @@ async def api_install_protocol(request: Request, server_id: int, req: InstallPro
                 max_connections=req.max_connections if req.max_connections is not None else 0
             )
         elif req.protocol == 'xray':
+            result = manager.install_protocol(port=req.port)
+        elif req.protocol == 'wireguard':
             result = manager.install_protocol(port=req.port)
         else:
             result = manager.install_protocol(req.protocol, port=req.port)
@@ -1490,7 +1536,7 @@ async def api_uninstall_protocol(request: Request, server_id: int, req: Protocol
         ssh = get_ssh(server)
         ssh.connect()
         manager = get_protocol_manager(ssh, req.protocol)
-        if req.protocol == 'xray':
+        if req.protocol in ('xray', 'wireguard'):
             manager.remove_container()
         else:
             manager.remove_container(req.protocol)
@@ -1511,6 +1557,7 @@ CONTAINER_NAMES = {
     'xray': 'amnezia-xray',
     'telemt': 'telemt',
     'dns': 'amnezia-dns',
+    'wireguard': 'amnezia-wireguard',
 }
 
 
@@ -1569,6 +1616,10 @@ async def api_server_config(request: Request, server_id: int, req: ProtocolReque
             from telemt_manager import TelemtManager
             mgr = TelemtManager(ssh)
             config = mgr._get_server_config()
+        elif req.protocol == 'wireguard':
+            from wireguard_manager import WireGuardManager
+            mgr = WireGuardManager(ssh)
+            config = mgr._get_server_config()
         else:
             mgr = AWGManager(ssh)
             config = mgr._get_server_config(req.protocol)
@@ -1605,6 +1656,10 @@ async def api_server_config_save(request: Request, server_id: int, req: ServerCo
             from telemt_manager import TelemtManager
             mgr = TelemtManager(ssh)
             mgr.save_server_config(req.protocol, req.config)
+        elif req.protocol == 'wireguard':
+            from wireguard_manager import WireGuardManager
+            mgr = WireGuardManager(ssh)
+            mgr.save_server_config(req.config)
         else:
             mgr = AWGManager(ssh)
             mgr.save_server_config(req.protocol, req.config)
@@ -1637,7 +1692,7 @@ async def api_get_connections(request: Request, server_id: int, protocol: str = 
             ssh.connect()
             try:
                 manager = get_protocol_manager(ssh, protocol)
-                clients = manager.get_clients(protocol)
+                clients = _manager_call(manager, 'get_clients', protocol)
             finally:
                 ssh.disconnect()
         except Exception as live_err:
@@ -1710,8 +1765,13 @@ async def api_add_connection(request: Request, server_id: int, req: AddConnectio
                 req.protocol, req.name, server['host'], port,
                 telemt_quota=req.telemt_quota,
                 telemt_max_ips=req.telemt_max_ips,
-                telemt_expiry=req.telemt_expiry
+                telemt_expiry=req.telemt_expiry,
+                secret=req.telemt_secret,
+                user_ad_tag=req.telemt_ad_tag,
+                max_tcp_conns=req.telemt_max_conns
             )
+        elif req.protocol == 'wireguard':
+            result = manager.add_client(req.name, server['host'])
         else:
             result = manager.add_client(req.protocol, req.name, server['host'], port)
         ssh.disconnect()
@@ -1753,7 +1813,7 @@ async def api_remove_connection(request: Request, server_id: int, req: Connectio
         ssh = get_ssh(server)
         ssh.connect()
         manager = get_protocol_manager(ssh, req.protocol)
-        manager.remove_client(req.protocol, req.client_id)
+        _manager_call(manager, 'remove_client', req.protocol, req.client_id)
         ssh.disconnect()
         # Remove from user_connections
         data['user_connections'] = [
@@ -1786,6 +1846,9 @@ async def api_edit_connection(request: Request, server_id: int, req: EditConnect
             edit_params['telemt_quota'] = req.telemt_quota
             edit_params['telemt_max_ips'] = req.telemt_max_ips
             edit_params['telemt_expiry'] = req.telemt_expiry
+            edit_params['secret'] = req.telemt_secret
+            edit_params['user_ad_tag'] = req.telemt_ad_tag
+            edit_params['max_tcp_conns'] = req.telemt_max_conns
             
         result = manager.edit_client(req.protocol, req.client_id, edit_params)
         ssh.disconnect()
@@ -1818,15 +1881,17 @@ async def api_get_connection_config(request: Request, server_id: int, req: Conne
         proto_info = server.get('protocols', {}).get(req.protocol, {})
         port = proto_info.get('port', '55424')
         config = ''
+        ssh = get_ssh(server)
         try:
-            ssh = get_ssh(server)
             ssh.connect()
             manager = get_protocol_manager(ssh, req.protocol)
-            config = manager.get_client_config(req.protocol, req.client_id, server['host'], port)
-            ssh.disconnect()
+            if req.protocol == 'wireguard':
+                config = manager.get_client_config(req.client_id, server['host'])
+            else:
+                config = manager.get_client_config(req.protocol, req.client_id, server['host'], port)
         except RuntimeError as e:
             err_text = str(e)
-            if 'private key not stored' in err_text.lower():
+            if req.protocol != 'wireguard' and 'private key not stored' in err_text.lower():
                 config = _find_imported_config(data, server_id, req.protocol, req.client_id)
                 if not config:
                     return JSONResponse(
@@ -1835,6 +1900,11 @@ async def api_get_connection_config(request: Request, server_id: int, req: Conne
                     )
             else:
                 raise
+        finally:
+            try:
+                ssh.disconnect()
+            except Exception:
+                pass
         vpn_link = generate_vpn_link(config) if config else ''
         return {'config': config, 'vpn_link': vpn_link}
     except Exception as e:
@@ -1856,7 +1926,7 @@ async def api_toggle_connection(request: Request, server_id: int, req: ToggleCon
         ssh = get_ssh(server)
         ssh.connect()
         manager = get_protocol_manager(ssh, req.protocol)
-        manager.toggle_client(req.protocol, req.client_id, req.enable)
+        _manager_call(manager, 'toggle_client', req.protocol, req.client_id, req.enable)
         ssh.disconnect()
         status = 'enabled' if req.enable else 'disabled'
         return {'status': 'success', 'enabled': req.enable, 'message': f'Connection {status}'}
@@ -1970,7 +2040,18 @@ async def api_add_user(request: Request, req: AddUserRequest):
                 ssh = get_ssh(server)
                 ssh.connect()
                 manager = get_protocol_manager(ssh, req.protocol)
-                conn_result = manager.add_client(req.protocol, conn_name, server['host'], port)
+                if req.protocol == 'telemt':
+                    conn_result = manager.add_client(
+                        req.protocol, conn_name, server['host'], port,
+                        telemt_quota=req.telemt_quota,
+                        telemt_max_ips=req.telemt_max_ips,
+                        telemt_expiry=req.telemt_expiry,
+                        secret=req.telemt_secret,
+                        user_ad_tag=req.telemt_ad_tag,
+                        max_tcp_conns=req.telemt_max_conns
+                    )
+                else:
+                    conn_result = manager.add_client(req.protocol, conn_name, server['host'], port)
                 ssh.disconnect()
 
                 if conn_result.get('client_id'):
@@ -2117,7 +2198,18 @@ async def api_add_user_connection(request: Request, user_id: str, req: AddUserCo
                     raise
         else:
             # Create new client
-            result = await asyncio.to_thread(manager.add_client, req.protocol, req.name, server['host'], port)
+            if req.protocol == 'telemt':
+                result = await asyncio.to_thread(
+                    manager.add_client, req.protocol, req.name, server['host'], port,
+                    telemt_quota=req.telemt_quota,
+                    telemt_max_ips=req.telemt_max_ips,
+                    telemt_expiry=req.telemt_expiry,
+                    secret=req.telemt_secret,
+                    user_ad_tag=req.telemt_ad_tag,
+                    max_tcp_conns=req.telemt_max_conns
+                )
+            else:
+                result = await asyncio.to_thread(manager.add_client, req.protocol, req.name, server['host'], port)
         
         await asyncio.to_thread(ssh.disconnect)
 
@@ -2519,7 +2611,7 @@ async def settings_page(request: Request):
     if not user:
         return RedirectResponse('/login')
     data = load_data()
-    return tpl(request, 'settings.html', settings=data.get('settings', {}), servers=data.get('servers', []))
+    return tpl(request, 'settings.html', settings=data.get('settings', {}), servers=data.get('servers', []), current_version=CURRENT_VERSION)
 
 
 @app.get('/api/settings')

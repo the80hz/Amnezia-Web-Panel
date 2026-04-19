@@ -125,9 +125,9 @@ class TelemtManager:
             self.ssh.upload_file_sudo(dockerfile, f"{remote_dir}/Dockerfile")
             
         results.append("Starting Telemt container...")
-        out, err, code = self.ssh.run_sudo_command(f"cd {remote_dir} && docker compose up -d --build", timeout=600)
+        out, err, code = self.ssh.run_sudo_command(f"sh -c 'cd {remote_dir} && docker compose up -d --build'", timeout=600)
         if code != 0:
-            self.ssh.run_sudo_command(f"cd {remote_dir} && docker-compose up -d --build", timeout=600)
+            self.ssh.run_sudo_command(f"sh -c 'cd {remote_dir} && docker-compose up -d --build'", timeout=600)
                 
         return {
             "status": "success",
@@ -246,7 +246,7 @@ class TelemtManager:
                     users[full_name] = secret
         return users
 
-    def add_client(self, protocol_type, name, host='', port='', telemt_quota=None, telemt_max_ips=None, telemt_expiry=None):
+    def add_client(self, protocol_type, name, host='', port='', **kwargs):
         username = re.sub(r'[^a-zA-Z0-9_.-]', '', name.replace(' ', '_'))
         if not username: username = "user_" + uuid.uuid4().hex[:8]
         
@@ -258,19 +258,54 @@ class TelemtManager:
             username = f"{base_username}_{idx}"
             idx += 1
             
-        secret = secrets.token_hex(16)
+        secret = kwargs.get('secret') or secrets.token_hex(16)
         
+        # 1. Update config file for persistence (but don't restart yet)
         config_text = self._insert_into_section(config_text, "access.users", f'{username} = "{secret}"')
-        if telemt_quota: 
-            config_text = self._insert_into_section(config_text, "access.user_data_quota", f'{username} = {telemt_quota}')
-        if telemt_max_ips: 
-            config_text = self._insert_into_section(config_text, "access.user_max_unique_ips", f'{username} = {telemt_max_ips}')
-        if telemt_expiry: 
-            config_text = self._insert_into_section(config_text, "access.user_expirations", f'{username} = "{telemt_expiry}"')
-
-        self.save_server_config(protocol_type, config_text)
         
-        link = f"tg://proxy?server={host}&port={port}&secret={secret}"
+        api_payload = {
+            "username": username,
+            "secret": secret
+        }
+        
+        if kwargs.get('telemt_quota'): 
+            val = int(kwargs['telemt_quota'])
+            config_text = self._insert_into_section(config_text, "access.user_data_quota", f'{username} = {val}')
+            api_payload['data_quota_bytes'] = val
+            
+        if kwargs.get('telemt_max_ips'): 
+            val = int(kwargs['telemt_max_ips'])
+            config_text = self._insert_into_section(config_text, "access.user_max_unique_ips", f'{username} = {val}')
+            api_payload['max_unique_ips'] = val
+            
+        if kwargs.get('telemt_expiry'): 
+            val = kwargs['telemt_expiry']
+            config_text = self._insert_into_section(config_text, "access.user_expirations", f'{username} = "{val}"')
+            api_payload['expiration_rfc3339'] = val
+
+        if kwargs.get('user_ad_tag'):
+            val = kwargs['user_ad_tag']
+            config_text = self._insert_into_section(config_text, "access.user_ad_tags", f'{username} = "{val}"')
+            api_payload['user_ad_tag'] = val
+            
+        if kwargs.get('max_tcp_conns'):
+            val = int(kwargs['max_tcp_conns'])
+            config_text = self._insert_into_section(config_text, "access.user_max_tcp_conns", f'{username} = {val}')
+            api_payload['max_tcp_conns'] = val
+
+        # Save config to host
+        self.ssh.upload_file_sudo(config_text.replace('\r\n', '\n'), "/opt/amnezia/telemt/config.toml")
+        
+        # 2. Call API for immediate effect
+        self._api_request("POST", "/v1/users", data=api_payload)
+        
+        # Fetch the official link from API (it includes TLS emulation padding like 'ee...' if enabled)
+        link = self.get_client_config(protocol_type, username, host, port)
+        
+        # Extreme fallback if API is slow or 404
+        if link == "Not found":
+            link = f"tg://proxy?server={host}&port={port}&secret={secret}"
+        
         return {
             "client_id": username,
             "config": link,
@@ -278,19 +313,48 @@ class TelemtManager:
         }
 
     def edit_client(self, protocol_type, client_id, new_params):
-        """Update existing client parameters in config."""
+        """Update existing client parameters via API and in config."""
         config_text = self._get_server_config()
+        api_payload = {}
         
         if 'telemt_quota' in new_params:
-            config_text = self._update_line_in_section(config_text, "access.user_data_quota", client_id, new_params['telemt_quota'])
-        if 'telemt_max_ips' in new_params:
-            config_text = self._update_line_in_section(config_text, "access.user_max_unique_ips", client_id, new_params['telemt_max_ips'])
-        if 'telemt_expiry' in new_params:
-            # Expiry is a string with quotes
-            val = f'"{new_params["telemt_expiry"]}"' if new_params['telemt_expiry'] else None
-            config_text = self._update_line_in_section(config_text, "access.user_expirations", client_id, val)
+            val = int(new_params['telemt_quota']) if new_params['telemt_quota'] else None
+            config_text = self._update_line_in_section(config_text, "access.user_data_quota", client_id, val)
+            api_payload['data_quota_bytes'] = val
             
-        self.save_server_config(protocol_type, config_text)
+        if 'telemt_max_ips' in new_params:
+            val = int(new_params['telemt_max_ips']) if new_params['telemt_max_ips'] else None
+            config_text = self._update_line_in_section(config_text, "access.user_max_unique_ips", client_id, val)
+            api_payload['max_unique_ips'] = val
+            
+        if 'telemt_expiry' in new_params:
+            val = new_params['telemt_expiry']
+            quoted_val = f'"{val}"' if val else None
+            config_text = self._update_line_in_section(config_text, "access.user_expirations", client_id, quoted_val)
+            api_payload['expiration_rfc3339'] = val
+            
+        if 'secret' in new_params:
+            val = new_params['secret']
+            quoted_val = f'"{val}"' if val else None
+            config_text = self._update_line_in_section(config_text, "access.users", client_id, quoted_val)
+            api_payload['secret'] = val
+
+        if 'user_ad_tag' in new_params:
+            val = new_params['user_ad_tag']
+            quoted_val = f'"{val}"' if val else None
+            config_text = self._update_line_in_section(config_text, "access.user_ad_tags", client_id, quoted_val)
+            api_payload['user_ad_tag'] = val
+            
+        if 'max_tcp_conns' in new_params:
+            val = int(new_params['max_tcp_conns']) if new_params['max_tcp_conns'] else None
+            config_text = self._update_line_in_section(config_text, "access.user_max_tcp_conns", client_id, val)
+            api_payload['max_tcp_conns'] = val
+
+        # Save config to host
+        self.ssh.upload_file_sudo(config_text.replace('\r\n', '\n'), "/opt/amnezia/telemt/config.toml")
+        
+        # API call
+        self._api_request("PATCH", f"/v1/users/{client_id}", data=api_payload)
         return {"status": "success"}
 
     def _update_line_in_section(self, config_text, section_name, client_id, value):
@@ -306,23 +370,18 @@ class TelemtManager:
         
         if section_end == -1: section_end = len(lines)
         if section_start == -1:
-            # Section not found, add it
             if value is not None:
                 lines.append(f"[{section_name}]")
                 lines.append(f'{client_id} = {value}')
                 lines.append("")
             return '\n'.join(lines)
 
-        # Look for client in section
         found = False
         for i in range(section_start + 1, section_end):
             line = lines[i].strip().lstrip('#').strip()
             if line.startswith(f"{client_id} ") or line.startswith(f"{client_id}="):
-                if value is None:
-                    # Remove line if value is None
-                    lines.pop(i)
-                else:
-                    lines[i] = f'{client_id} = {value}'
+                if value is None: lines.pop(i)
+                else: lines[i] = f'{client_id} = {value}'
                 found = True
                 break
         
@@ -347,6 +406,10 @@ class TelemtManager:
         return '\n'.join(lines)
 
     def remove_client(self, protocol_type, client_id):
+        # 1. API
+        self._api_request("DELETE", f"/v1/users/{client_id}")
+        
+        # 2. Config
         config_text = self._get_server_config()
         lines = config_text.split('\n')
         new_lines = []
@@ -355,9 +418,13 @@ class TelemtManager:
             if stripped.startswith(f"{client_id} ") or stripped.startswith(f"{client_id}="):
                 continue
             new_lines.append(line)
-        self.save_server_config(protocol_type, '\n'.join(new_lines))
+        self.ssh.upload_file_sudo('\n'.join(new_lines).replace('\r\n', '\n'), "/opt/amnezia/telemt/config.toml")
 
     def toggle_client(self, protocol_type, client_id, enable, restart=True):
+        # API doesn't have a direct "toggle", so we either set a huge quota or remove/re-add
+        # But for Telemt, commenting out in config is the persistent way.
+        # We'll use HUP after toggling in config.
+        
         config_text = self._get_server_config()
         lines = config_text.split('\n')
         new_lines = []
@@ -373,10 +440,21 @@ class TelemtManager:
                     line = base_line if enable else f"# {base_line}"
             new_lines.append(line)
         
-        if restart:
-            self.save_server_config(protocol_type, '\n'.join(new_lines))
+        self.ssh.upload_file_sudo('\n'.join(new_lines).replace('\r\n', '\n'), "/opt/amnezia/telemt/config.toml")
+        
+        if enable:
+            # If enabling, we re-add via API since it might have been deleted from memory
+            secret = ""
+            users = self._parse_users_from_config('\n'.join(new_lines))
+            secret = users.get(client_id, "")
+            if secret:
+                self._api_request("POST", "/v1/users", data={"username": client_id, "secret": secret})
         else:
-            self.ssh.upload_file_sudo('\n'.join(new_lines).replace('\r\n', '\n'), "/opt/amnezia/telemt/config.toml")
+            # If disabling, we just delete from memory
+            self._api_request("DELETE", f"/v1/users/{client_id}")
+
+        if restart:
+            self.ssh.run_sudo_command(f"docker kill -s HUP {self.CONTAINER_NAME} || docker restart {self.CONTAINER_NAME}")
 
     def get_client_config(self, protocol_type, client_id, host='', port=''):
         resp = self._api_request("GET", f"/v1/users/{client_id}")

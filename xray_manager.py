@@ -380,8 +380,16 @@ ENTRYPOINT [ "dumb-init", "/opt/amnezia/start.sh" ]
         meta = self._get_meta_json()
         if not meta: return None
 
+        config = self._get_server_json()
+        sni = meta.get('site_name', 'yahoo.com')
+        if config:
+            try:
+                sni = config['inbounds'][0]['streamSettings']['realitySettings']['serverNames'][0]
+            except Exception:
+                pass
+
         # Format URL
-        # vless://{id}@{host}:{port}?type=tcp&security=reality&pbk={public_key}&sni={site_name}&fp=chrome&sid={short_id}&spx=%2F&flow=xtls-rprx-vision#{name}
+        # vless://{id}@{host}:{port}?type=tcp&security=reality&pbk={public_key}&sni={sni}&fp=chrome&sid={short_id}&spx=%2F&flow=xtls-rprx-vision#{name}
         
         name = client.get('userData', {}).get('clientName', 'vpn')
         encoded_name = urllib.parse.quote(name)
@@ -389,7 +397,7 @@ ENTRYPOINT [ "dumb-init", "/opt/amnezia/start.sh" ]
         url = (
             f"vless://{client_id}@{server_host}:{meta.get('port', port)}"
             f"?type=tcp&security=reality&pbk={meta['public_key']}"
-            f"&sni={meta['site_name']}&fp=chrome&sid={meta['short_id']}"
+            f"&sni={sni}&fp=chrome&sid={meta['short_id']}"
             f"&spx=%2F&flow=xtls-rprx-vision#{encoded_name}"
         )
         return url

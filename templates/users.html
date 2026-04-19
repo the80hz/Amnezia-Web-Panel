@@ -145,6 +145,33 @@
                     placeholder="{{ _('connection_name_placeholder') }}">
             </div>
 
+            <div id="newUserTelemtOptions" style="display:none; padding: var(--space-md); background: rgba(0,0,0,0.03); border-radius: var(--radius-md); margin-bottom: var(--space-md);">
+                <div class="form-group">
+                    <label class="form-label">Secret (Hex 32 chars)</label>
+                    <input class="form-input" type="text" id="newUserTelemtSecret" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">AD Tag (Hex 32 chars)</label>
+                    <input class="form-input" type="text" id="newUserTelemtAdTag" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Max TCP Conns</label>
+                    <input class="form-input" type="number" id="newUserTelemtMaxConns" placeholder="Optional" min="0">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Quota (Bytes)</label>
+                    <input class="form-input" type="number" id="newUserTelemtQuota" placeholder="Optional" min="0">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Max Unique IPs</label>
+                    <input class="form-input" type="number" id="newUserTelemtMaxIps" placeholder="Optional" min="1">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Expiration Date (ISO 8601)</label>
+                    <input class="form-input" type="text" id="newUserTelemtExpiry" placeholder="e.g. 2026-12-31T23:59:59Z">
+                </div>
+            </div>
+
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" onclick="closeModal('addUserModal')">{{ _('cancel')
                     }}</button>
@@ -259,6 +286,33 @@
         <div class="form-group" id="ucNameGroup">
             <label class="form-label">{{ _('conn_name_panel') }}</label>
             <input class="form-input" type="text" id="ucName" placeholder="{{ _('connection_name_placeholder') }}">
+        </div>
+
+        <div id="ucTelemtOptions" style="display:none; padding: var(--space-md); background: rgba(0,0,0,0.03); border-radius: var(--radius-md); margin-bottom: var(--space-md);">
+            <div class="form-group">
+                <label class="form-label">Secret (Hex 32 chars)</label>
+                <input class="form-input" type="text" id="ucTelemtSecret" placeholder="Optional">
+            </div>
+            <div class="form-group">
+                <label class="form-label">AD Tag (Hex 32 chars)</label>
+                <input class="form-input" type="text" id="ucTelemtAdTag" placeholder="Optional">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Max TCP Conns</label>
+                <input class="form-input" type="number" id="ucTelemtMaxConns" placeholder="Optional" min="0">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Quota (Bytes)</label>
+                <input class="form-input" type="number" id="ucTelemtQuota" placeholder="Optional" min="0">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Max Unique IPs</label>
+                <input class="form-input" type="number" id="ucTelemtMaxIps" placeholder="Optional" min="1">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Expiration Date (ISO 8601)</label>
+                <input class="form-input" type="text" id="ucTelemtExpiry" placeholder="e.g. 2026-12-31T23:59:59Z">
+            </div>
         </div>
 
         <div class="modal-footer">
@@ -509,7 +563,18 @@
         const show = e.target.value !== '';
         updateProtocols(e.target.value, 'newUserProtocol', 'newUserProtoGroup');
         document.getElementById('newUserConnNameGroup').style.display = show ? '' : 'none';
+        updateTelemtOptions('newUserProtocol', 'newUserTelemtOptions');
     });
+
+    document.getElementById('newUserProtocol').addEventListener('change', (e) => {
+        updateTelemtOptions('newUserProtocol', 'newUserTelemtOptions');
+    });
+
+    function updateTelemtOptions(protoSelectId, optionsId) {
+        const proto = document.getElementById(protoSelectId).value;
+        const options = document.getElementById(optionsId);
+        if (options) options.style.display = (proto === 'telemt') ? 'block' : 'none';
+    }
 
     document.getElementById('ucServer').addEventListener('change', (e) => {
         updateProtocols(e.target.value, 'ucProtocol');
@@ -522,6 +587,7 @@
         if (document.getElementById('ucMode').value === 'existing') {
             fetchExistingClients();
         }
+        updateTelemtOptions('ucProtocol', 'ucTelemtOptions');
     });
 
     async function addUser(e) {
@@ -549,6 +615,14 @@
                 body.server_id = parseInt(serverId);
                 body.protocol = document.getElementById('newUserProtocol').value;
                 body.connection_name = document.getElementById('newUserConnName').value || null;
+                if (body.protocol === 'telemt') {
+                    body.telemt_quota = document.getElementById('newUserTelemtQuota').value || null;
+                    body.telemt_max_ips = parseInt(document.getElementById('newUserTelemtMaxIps').value) || null;
+                    body.telemt_expiry = document.getElementById('newUserTelemtExpiry').value || null;
+                    body.telemt_secret = document.getElementById('newUserTelemtSecret').value || null;
+                    body.telemt_ad_tag = document.getElementById('newUserTelemtAdTag').value || null;
+                    body.telemt_max_conns = parseInt(document.getElementById('newUserTelemtMaxConns').value) || null;
+                }
             }
             const result = await apiCall('/api/users/add', 'POST', body);
             showToast(_('success'), 'success');
@@ -669,6 +743,13 @@
                 const clientId = document.getElementById('ucExistingClient').value;
                 if (!clientId) throw new Error(_('select_connection'));
                 body.client_id = clientId;
+            } else if (body.protocol === 'telemt') {
+                body.telemt_quota = document.getElementById('ucTelemtQuota').value || null;
+                body.telemt_max_ips = parseInt(document.getElementById('ucTelemtMaxIps').value) || null;
+                body.telemt_expiry = document.getElementById('ucTelemtExpiry').value || null;
+                body.telemt_secret = document.getElementById('ucTelemtSecret').value || null;
+                body.telemt_ad_tag = document.getElementById('ucTelemtAdTag').value || null;
+                body.telemt_max_conns = parseInt(document.getElementById('ucTelemtMaxConns').value) || null;
             }
 
             const result = await apiCall(`/api/users/${currentUserId}/connections/add`, 'POST', body);
