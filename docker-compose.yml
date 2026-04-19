@@ -1,7 +1,8 @@
-version: '3.8'
-
 services:
   amnezia_panel:
+    build: 
+      context: .
+      dockerfile: Dockerfile
     image: prvtpro/amnezia-panel:1.4.0
     container_name: amnezia_panel
     # To connect the (Traefik) balancer, assign one network to both containers and uncomment the labels by replacing the domain with your own.
