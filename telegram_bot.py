@@ -6,6 +6,9 @@ Runs as a background asyncio task alongside the FastAPI app.
 import asyncio
 import logging
 import html
+import secrets
+import hashlib
+import uuid
 from typing import Optional, Callable, Tuple
 from datetime import datetime
 
@@ -18,6 +21,7 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------- #
 _bot_task: Optional[asyncio.Task] = None
 _pending_profile_create: dict = {}
+_pending_web_access: dict = {}
 
 
 def is_running() -> bool:
@@ -152,6 +156,92 @@ def _find_user_by_username(users: list, username: str):
     return None
 
 
+def _hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100000)
+    return f"{salt}${h.hex()}"
+
+
+def _build_panel_url(data: dict) -> str:
+    settings = data.get("settings", {})
+    tg = settings.get("telegram", {})
+    custom_panel_url = str(tg.get("panel_url", "") or "").strip()
+    if custom_panel_url:
+        return custom_panel_url
+
+    ssl = settings.get("ssl", {})
+    domain = str(ssl.get("domain", "") or "").strip()
+    panel_port = int(ssl.get("panel_port", 5000) or 5000)
+    ssl_enabled = bool(ssl.get("enabled"))
+
+    if domain:
+        if ssl_enabled:
+            if panel_port == 443:
+                return f"https://{domain}"
+            return f"https://{domain}:{panel_port}"
+        if panel_port == 80:
+            return f"http://{domain}"
+        return f"http://{domain}:{panel_port}"
+
+    return "http://127.0.0.1:5000"
+
+
+def _ensure_unique_username(base: str, users: list) -> str:
+    existing = {str(u.get("username", "")).lower() for u in users}
+    candidate = base
+    idx = 1
+    while candidate.lower() in existing:
+        idx += 1
+        candidate = f"{base}_{idx}"
+    return candidate
+
+
+def _find_or_create_user_for_web_access(load_data_fn: Callable, save_data_fn: Callable, tg_id: str, tg_username_with_at: str, password: str):
+    data = load_data_fn()
+    users = data.get("users", [])
+
+    user = _find_user_by_tg_id(users, tg_id)
+    if not user and tg_username_with_at:
+        user = _find_user_by_username(users, tg_username_with_at)
+
+    was_created = False
+    if user:
+        user["telegramId"] = tg_id
+        user["password_hash"] = _hash_password(password)
+        if tg_username_with_at:
+            user["description"] = tg_username_with_at
+    else:
+        base_username = (tg_username_with_at.lstrip("@") if tg_username_with_at else f"tg_{tg_id}")
+        base_username = (base_username or f"tg_{tg_id}").replace(" ", "_")
+        username = _ensure_unique_username(base_username, users)
+        user = {
+            "id": str(uuid.uuid4()),
+            "username": username,
+            "password_hash": _hash_password(password),
+            "role": "user",
+            "enabled": True,
+            "created_at": datetime.now().isoformat(),
+            "telegramId": tg_id,
+            "email": None,
+            "description": tg_username_with_at or "",
+            "traffic_limit": 0,
+            "traffic_reset_strategy": "never",
+            "traffic_used": 0,
+            "traffic_total": 0,
+            "last_reset_at": datetime.now().isoformat(),
+            "expiration_date": None,
+            "remnawave_uuid": None,
+            "share_enabled": False,
+            "share_token": secrets.token_urlsafe(16),
+            "share_password_hash": None,
+        }
+        users.append(user)
+        was_created = True
+
+    save_data_fn(data)
+    return user, was_created, _build_panel_url(data)
+
+
 def _parse_dt(value: str):
     v = str(value or "").strip()
     if not v:
@@ -192,8 +282,18 @@ def _build_connections_keyboard(conns: list, data: dict) -> dict:
         rows.append([{"text": label, "callback_data": f"cfg:{c['id']}"}])
     rows.append([{"text": "➕ Создать профиль", "callback_data": "new:start"}])
     rows.append([{"text": "🗑 Удалить профиль", "callback_data": "del:start"}])
+    rows.append([{"text": "🔑 Доступ к веб-панели", "callback_data": "web:access"}])
     rows.append([{"text": "🔄 Обновить список", "callback_data": "refresh"}])
     return {"inline_keyboard": rows}
+
+
+def _build_main_actions_keyboard() -> dict:
+    return {
+        "inline_keyboard": [
+            [{"text": "🔑 Доступ к веб-панели", "callback_data": "web:access"}],
+            [{"text": "🔄 Обновить список", "callback_data": "refresh"}],
+        ]
+    }
 
 
 def _build_servers_keyboard(data: dict) -> dict:
@@ -423,9 +523,10 @@ async def _handle_start(api: TelegramAPI, msg: dict, load_data_fn: Callable, sav
             chat_id,
             f"👋 Hi, <b>{first_name}</b>!\n\n"
             "Your Telegram account is not linked to any panel user.\n"
-            "Please contact your teammate or bot administrator.\n\n"
+            "You can create/reset your web panel password via the button below.\n\n"
             f"Your Telegram ID: <code>{tg_id}</code>"
             + (f"\nYour username: <code>{html.escape(tg_username_with_at)}</code>" if tg_username_with_at else ""),
+            reply_markup=_build_main_actions_keyboard(),
         )
         return
 
@@ -438,6 +539,7 @@ async def _handle_start(api: TelegramAPI, msg: dict, load_data_fn: Callable, sav
             f"👋 Hi, <b>{first_name}</b>!\n\n"
             f"You are registered as <b>{panel_user['username']}</b>.\n\n"
             "You have no connections yet. Please contact your administrator.",
+            reply_markup=_build_main_actions_keyboard(),
         )
         return
 
@@ -636,6 +738,62 @@ async def _handle_delete_connection(
         await api.edit_message(chat_id, message_id, f"❌ Error: {html.escape(str(e))}")
 
 
+async def _handle_web_access_start(api: TelegramAPI, chat_id: int, message_id: int, callback_id: str, tg_id: str):
+    await api.answer_callback(callback_id, "Введите пароль")
+    _pending_web_access[tg_id] = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+    }
+    await api.edit_message(
+        chat_id,
+        message_id,
+        "<b>Доступ к веб-панели</b>\n"
+        "Отправьте новый пароль одним сообщением.\n"
+        "Если пользователь уже есть, пароль будет сброшен.\n"
+        "Если пользователя нет, он будет создан.\n\n"
+        "Для отмены отправьте: <code>/cancel</code>",
+    )
+
+
+async def _handle_web_access_password_input(
+    api: TelegramAPI,
+    msg: dict,
+    tg_id: str,
+    load_data_fn: Callable,
+    save_data_fn: Callable,
+):
+    chat_id = msg["chat"]["id"]
+    password = str(msg.get("text", "") or "").strip()
+    if len(password) < 6:
+        await api.send_message(chat_id, "Пароль должен быть не короче 6 символов.")
+        return
+
+    tg_username = str(msg.get("from", {}).get("username", "") or "").strip()
+    tg_username_with_at = f"@{tg_username.lstrip('@')}" if tg_username else ""
+
+    try:
+        user, was_created, panel_url = _find_or_create_user_for_web_access(
+            load_data_fn=load_data_fn,
+            save_data_fn=save_data_fn,
+            tg_id=tg_id,
+            tg_username_with_at=tg_username_with_at,
+            password=password,
+        )
+
+        status_text = "Пользователь создан" if was_created else "Пароль обновлен"
+        await api.send_message(
+            chat_id,
+            f"✅ <b>{status_text}</b>\n"
+            f"Логин: <code>{html.escape(user.get('username', ''))}</code>\n"
+            f"Ссылка на панель: <a href=\"{html.escape(panel_url)}\">{html.escape(panel_url)}</a>",
+        )
+    except Exception as e:
+        logger.exception("Bot: error processing web access password")
+        await api.send_message(chat_id, f"❌ Error: {html.escape(str(e))}")
+    finally:
+        _pending_web_access.pop(tg_id, None)
+
+
 # ----------------------------------------------------------------------- #
 #  Get config — send multiple messages with different formats
 # ----------------------------------------------------------------------- #
@@ -778,8 +936,15 @@ async def _dispatch(api: TelegramAPI, update: dict, load_data_fn: Callable, save
             if tg_id in _pending_profile_create:
                 _pending_profile_create.pop(tg_id, None)
                 await api.send_message(msg["chat"]["id"], "Создание профиля отменено.")
+            elif tg_id in _pending_web_access:
+                _pending_web_access.pop(tg_id, None)
+                await api.send_message(msg["chat"]["id"], "Операция веб-доступа отменена.")
             else:
                 await api.send_message(msg["chat"]["id"], "Нет активной операции создания профиля.")
+            return
+
+        if tg_id in _pending_web_access and not text.startswith("/"):
+            await _handle_web_access_password_input(api, msg, tg_id, load_data_fn, save_data_fn)
             return
 
         if tg_id in _pending_profile_create and not text.startswith("/"):
@@ -835,6 +1000,8 @@ async def _dispatch(api: TelegramAPI, update: dict, load_data_fn: Callable, save
             )
         elif data_str == "del:start":
             await _handle_delete_start(api, chat_id, message_id, callback_id, tg_id, load_data_fn)
+        elif data_str == "web:access":
+            await _handle_web_access_start(api, chat_id, message_id, callback_id, tg_id)
         elif data_str.startswith("del:"):
             connection_id = data_str[4:]
             await _handle_delete_connection(

@@ -187,6 +187,7 @@
     "telegram_bot_title": "🤖 Telegram Bot",
     "bot_token_label": "Bot Token (от @BotFather)",
     "bot_chat_id_label": "Chat ID обязательного чата (group/supergroup)",
+    "bot_panel_url_label": "Ссылка на веб-панель",
     "bot_status": "Статус",
     "bot_running": "✅ Запущен",
     "bot_stopped": "⏹ Остановлен",

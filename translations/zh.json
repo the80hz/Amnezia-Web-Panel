@@ -185,6 +185,7 @@
     "telegram_bot_title": "🤖 Telegram 机器人",
     "bot_token_label": "Bot Token (来自 @BotFather)",
     "bot_chat_id_label": "必需群聊 ID（群组/超级群组）",
+    "bot_panel_url_label": "Web 面板链接",
     "bot_status": "状态",
     "bot_running": "✅ 运行中",
     "bot_stopped": "⏹ 已停止",

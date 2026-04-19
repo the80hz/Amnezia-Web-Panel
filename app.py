@@ -838,6 +838,7 @@ class TelegramSettings(BaseModel):
     token: str = ''
     enabled: bool = False
     chat_id: str = ''
+    panel_url: str = ''
 
 
 
@@ -958,12 +959,16 @@ async def startup():
         data['settings']['telegram'] = {
             'token': '',
             'enabled': False,
-            'chat_id': ''
+            'chat_id': '',
+            'panel_url': ''
         }
         changed = True
         logger.info("Migrated Telegram settings")
     elif 'chat_id' not in data['settings']['telegram']:
         data['settings']['telegram']['chat_id'] = ''
+        changed = True
+    if 'panel_url' not in data.get('settings', {}).get('telegram', {}):
+        data['settings']['telegram']['panel_url'] = ''
         changed = True
 
     # Server emoji migration
