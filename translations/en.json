@@ -186,6 +186,7 @@
     "enable_captcha": "Enable captcha (multicolorcaptcha)",
     "telegram_bot_title": "🤖 Telegram Bot",
     "bot_token_label": "Bot Token (from @BotFather)",
+    "bot_chat_id_label": "Required chat ID (group/supergroup)",
     "bot_status": "Status",
     "bot_running": "✅ Running",
     "bot_stopped": "⏹ Stopped",

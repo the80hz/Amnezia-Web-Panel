@@ -837,6 +837,7 @@ class SSLSettings(BaseModel):
 class TelegramSettings(BaseModel):
     token: str = ''
     enabled: bool = False
+    chat_id: str = ''
 
 
 
@@ -949,6 +950,21 @@ async def startup():
         }
         changed = True
         logger.info("Migrated SSL settings")
+
+    # Telegram settings migration
+    if 'telegram' not in data.get('settings', {}):
+        if 'settings' not in data:
+            data['settings'] = {}
+        data['settings']['telegram'] = {
+            'token': '',
+            'enabled': False,
+            'chat_id': ''
+        }
+        changed = True
+        logger.info("Migrated Telegram settings")
+    elif 'chat_id' not in data['settings']['telegram']:
+        data['settings']['telegram']['chat_id'] = ''
+        changed = True
 
     # Server emoji migration
     for s in data.get('servers', []):

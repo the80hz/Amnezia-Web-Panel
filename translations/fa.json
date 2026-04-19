@@ -184,6 +184,7 @@
     "enable_captcha": "فعال‌سازی کد امنیتی",
     "telegram_bot_title": "🤖 ربات تلگرام",
     "bot_token_label": "توکن ربات (از @BotFather)",
+    "bot_chat_id_label": "شناسه چت الزامی (گروه/سوپرگروه)",
     "bot_status": "وضعیت",
     "bot_running": "✅ در حال اجرا",
     "bot_stopped": "⏹ متوقف شده",

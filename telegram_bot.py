@@ -6,7 +6,7 @@ Runs as a background asyncio task alongside the FastAPI app.
 import asyncio
 import logging
 import html
-from typing import Optional, Callable
+from typing import Optional, Callable, Tuple
 from datetime import datetime
 
 import httpx
@@ -101,6 +101,44 @@ def _find_user(load_data_fn: Callable, tg_id: str):
     for u in data.get("users", []):
         stored = str(u.get("telegramId", "") or "").lstrip("@")
         if stored and stored == tg_id_clean:
+            return u
+    return None
+
+
+async def _is_chat_member(api: TelegramAPI, chat_id: str, tg_id: str) -> Tuple[bool, Optional[str]]:
+    try:
+        resp = await api.call("getChatMember", chat_id=chat_id, user_id=tg_id)
+        if not resp.get("ok"):
+            desc = str(resp.get("description", "") or "").lower()
+            # "user not found" means user is not a member in the target chat.
+            if "user not found" in desc:
+                return False, None
+            # Configuration/permission errors that require admin action.
+            if any(x in desc for x in ("chat not found", "forbidden", "not enough rights", "bot was kicked")):
+                return False, "chat_config_error"
+            return False, "chat_check_failed"
+        status = (resp.get("result", {}) or {}).get("status", "")
+        return status not in ("left", "kicked"), None
+    except Exception:
+        return False, "chat_check_failed"
+
+
+def _find_user_by_tg_id(users: list, tg_id: str):
+    needle = str(tg_id or "").strip()
+    for u in users:
+        stored = str(u.get("telegramId", "") or "").strip()
+        if stored == needle:
+            return u
+    return None
+
+
+def _find_user_by_username(users: list, username: str):
+    uname = str(username or "").strip().lstrip("@").lower()
+    if not uname:
+        return None
+    for u in users:
+        stored = str(u.get("telegramId", "") or "").strip().lstrip("@").lower()
+        if stored == uname:
             return u
     return None
 
@@ -330,24 +368,58 @@ async def _remove_connection_for_user(
 # ----------------------------------------------------------------------- #
 #  /start handler — shows connections list immediately
 # ----------------------------------------------------------------------- #
-async def _handle_start(api: TelegramAPI, msg: dict, load_data_fn: Callable):
+async def _handle_start(api: TelegramAPI, msg: dict, load_data_fn: Callable, save_data_fn: Callable):
     chat_id = msg["chat"]["id"]
     tg_id = str(msg["from"]["id"])
+    tg_username = str(msg["from"].get("username", "") or "").strip()
+    tg_username_with_at = f"@{tg_username.lstrip('@')}" if tg_username else ""
     first_name = msg["from"].get("first_name", "")
 
-    panel_user = _find_user(load_data_fn, tg_id)
+    data = load_data_fn()
+    tg_settings = data.get("settings", {}).get("telegram", {})
+    required_chat_id = str(tg_settings.get("chat_id", "") or "").strip()
+
+    if required_chat_id:
+        in_required_chat, chat_check_error = await _is_chat_member(api, required_chat_id, tg_id)
+        if not in_required_chat:
+            if chat_check_error == "chat_config_error":
+                await api.send_message(
+                    chat_id,
+                    "❌ Ошибка настройки Telegram-проверки.\n"
+                    "Проверьте корректность chat_id и что бот добавлен в чат с нужными правами.\n\n"
+                    "После исправления повторите /start.",
+                )
+                return
+            await api.send_message(
+                chat_id,
+                "❌ Доступ ограничен.\n"
+                "Сначала вступите в нужный чат, затем повторите /start.\n\n"
+                "Если не получается, обратитесь к товарищу или к админу бота.",
+            )
+            return
+
+    users = data.get("users", [])
+    panel_user = _find_user_by_tg_id(users, tg_id)
+
+    if not panel_user and tg_username_with_at:
+        panel_user = _find_user_by_username(users, tg_username_with_at)
+        if panel_user:
+            panel_user["telegramId"] = tg_id
+            panel_user["description"] = tg_username_with_at
+            save_data_fn(data)
+            logger.info("Telegram auto-link: user=%s tg_id=%s username=%s", panel_user.get("username"), tg_id, tg_username_with_at)
 
     if not panel_user:
         await api.send_message(
             chat_id,
             f"👋 Hi, <b>{first_name}</b>!\n\n"
             "Your Telegram account is not linked to any panel user.\n"
-            "Please contact your administrator — they need to add your Telegram ID to your profile.\n\n"
-            f"Your Telegram ID: <code>{tg_id}</code>",
+            "Please contact your teammate or bot administrator.\n\n"
+            f"Your Telegram ID: <code>{tg_id}</code>"
+            + (f"\nYour username: <code>{html.escape(tg_username_with_at)}</code>" if tg_username_with_at else ""),
         )
         return
 
-    data = load_data_fn()
     conns = [c for c in data.get("user_connections", []) if c["user_id"] == panel_user["id"]]
     conns = _sort_connections_newest_first(conns)
 
@@ -688,6 +760,8 @@ async def _dispatch(api: TelegramAPI, update: dict, load_data_fn: Callable, save
     # --- Text messages ---
     if "message" in update:
         msg = update["message"]
+        if msg.get("chat", {}).get("type") != "private":
+            return
         text = msg.get("text", "")
         tg_id = str(msg.get("from", {}).get("id", ""))
 
@@ -712,14 +786,16 @@ async def _dispatch(api: TelegramAPI, update: dict, load_data_fn: Callable, save
             return
 
         if text.startswith("/start"):
-            await _handle_start(api, msg, load_data_fn)
+            await _handle_start(api, msg, load_data_fn, save_data_fn)
         elif text.startswith("/connections"):
             # Alias for /start
-            await _handle_start(api, msg, load_data_fn)
+            await _handle_start(api, msg, load_data_fn, save_data_fn)
 
     # --- Inline button callbacks ---
     elif "callback_query" in update:
         cq = update["callback_query"]
+        if cq.get("message", {}).get("chat", {}).get("type") != "private":
+            return
         callback_id = cq["id"]
         data_str = cq.get("data", "")
         chat_id = cq["message"]["chat"]["id"]
