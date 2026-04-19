@@ -287,6 +287,7 @@ def _build_cached_clients_for_server_protocol(data: dict, latest_state: dict, se
             'clientId': cid,
             'assigned_user': assigned_user,
             'assigned_user_id': assigned_user_id,
+            'last_used_at': uc.get('last_used_at') if uc else None,
             'online': state.get('online'),
             'userData': {
                 'clientName': state.get('name', ''),
@@ -312,6 +313,7 @@ def _build_cached_clients_for_server_protocol(data: dict, latest_state: dict, se
             'clientId': cid,
             'assigned_user': users_map.get(uid, {}).get('username', ''),
             'assigned_user_id': uid,
+            'last_used_at': uc.get('last_used_at'),
             'online': None,
             'userData': {
                 'clientName': uc.get('name', ''),
@@ -1046,6 +1048,27 @@ async def periodic_background_tasks():
                 if st:
                     latest_snapshot['by_connection_id'][uc.get('id', '')] = st
 
+            # Persist latest profile usage timestamp when profile is online.
+            online_conn_ids = [
+                conn_id for conn_id, st in latest_snapshot['by_connection_id'].items()
+                if st.get('online') is True
+            ]
+            if online_conn_ids:
+                now_iso = datetime.now().isoformat()
+                async with DATA_LOCK:
+                    curr_data = load_data()
+                    conn_map = {c.get('id'): c for c in curr_data.get('user_connections', [])}
+                    changed_usage = False
+                    for conn_id in online_conn_ids:
+                        uc = conn_map.get(conn_id)
+                        if not uc:
+                            continue
+                        if uc.get('last_used_at') != now_iso:
+                            uc['last_used_at'] = now_iso
+                            changed_usage = True
+                    if changed_usage:
+                        save_data(curr_data)
+
             try:
                 save_latest_state(latest_snapshot)
             except Exception as e:
@@ -1749,6 +1772,7 @@ async def api_get_connections(request: Request, server_id: int, protocol: str = 
                     user_data = client.setdefault('userData', {})
                     if not user_data.get('creationDate') and uc.get('created_at'):
                         user_data['creationDate'] = uc.get('created_at')
+                    client['last_used_at'] = uc.get('last_used_at')
                     if u:
                         client['assigned_user'] = u['username']
                         client['assigned_user_id'] = uid

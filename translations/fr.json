@@ -39,6 +39,7 @@
     "vpn_key": "Clé VPN",
     "clients": "Clients",
     "traffic": "Trafic",
+    "last_used": "Dernière utilisation",
     "limit": "Limite",
     "manage": "Gérer",
     "no_protocols": "Aucun protocole",

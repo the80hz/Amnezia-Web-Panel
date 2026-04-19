@@ -979,6 +979,7 @@
                 const handshake = userData.latestHandshake || '';
                 const received = userData.dataReceived || '';
                 const sent = userData.dataSent || '';
+                const lastUsed = client.last_used_at || '';
                 const online = (client.online === true || client.online === false) ? client.online : null;
                 const initial = name.charAt(0).toUpperCase();
                 const enabled = (client.enabled !== undefined) ? client.enabled : (userData.enabled !== false);
@@ -1006,6 +1007,8 @@
                     if (received) metaHtml += `<span class="traffic-badge traffic-down">↓ ${received}</span>`;
                     if (sent) metaHtml += `<span class="traffic-badge traffic-up">↑ ${sent}</span>`;
                 }
+
+                if (lastUsed) metaHtml += `<span>🕒 ${_('last_used')}: ${formatDate(lastUsed)}</span>`;
 
                 if (!enabled) metaHtml += `<span class="badge badge-danger" style="font-size:0.65rem">${_('stop')}</span>`;
 

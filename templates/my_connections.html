@@ -59,6 +59,9 @@
                         {% if c.created_at %}
                         <span>📅 {{ c.created_at[:10] }}</span>
                         {% endif %}
+                        {% if c.last_used_at %}
+                        <span>🕒 {{ _('last_used') }}: {{ (c.last_used_at|replace('T', ' '))[:16] }}</span>
+                        {% endif %}
                     </div>
                 </div>
             </div>

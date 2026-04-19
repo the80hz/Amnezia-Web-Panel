@@ -39,6 +39,7 @@
     "vpn_key": "VPN 密钥",
     "clients": "客户端",
     "traffic": "流量",
+    "last_used": "最近使用",
     "limit": "限制",
     "manage": "管理",
     "no_protocols": "无协议",

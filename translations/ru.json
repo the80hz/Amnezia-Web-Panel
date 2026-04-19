@@ -39,6 +39,7 @@
     "vpn_key": "VPN-ключ",
     "clients": "Клиенты",
     "traffic": "Трафик",
+    "last_used": "Последнее использование",
     "limit": "Limit",
     "manage": "Управление",
     "no_protocols": "Нет протоколов",

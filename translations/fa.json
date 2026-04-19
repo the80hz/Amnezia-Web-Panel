@@ -39,6 +39,7 @@
     "vpn_key": "کلید VPN",
     "clients": "کلاینت‌ها",
     "traffic": "ترافیک",
+    "last_used": "آخرین استفاده",
     "limit": "محدودیت",
     "manage": "مدیریت",
     "no_protocols": "بدون پروتکل",

@@ -39,6 +39,7 @@
     "vpn_key": "VPN key",
     "clients": "Clients",
     "traffic": "Traffic",
+    "last_used": "Last used",
     "limit": "Limit",
     "manage": "Manage",
     "no_protocols": "No protocols",
