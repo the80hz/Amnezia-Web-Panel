@@ -107,9 +107,17 @@ def _find_user(load_data_fn: Callable, tg_id: str):
 
 async def _is_chat_member(api: TelegramAPI, chat_id: str, tg_id: str) -> Tuple[bool, Optional[str]]:
     try:
-        resp = await api.call("getChatMember", chat_id=chat_id, user_id=tg_id)
+        chat_id_value = chat_id
+        chat_id_str = str(chat_id or "").strip()
+        if chat_id_str and (chat_id_str.lstrip("-").isdigit()):
+            chat_id_value = int(chat_id_str)
+
+        user_id_value = int(str(tg_id or "").strip())
+
+        resp = await api.call("getChatMember", chat_id=chat_id_value, user_id=user_id_value)
         if not resp.get("ok"):
             desc = str(resp.get("description", "") or "").lower()
+            logger.warning("getChatMember failed: chat_id=%s user_id=%s description=%s", chat_id_value, user_id_value, resp.get("description", ""))
             # "user not found" means user is not a member in the target chat.
             if "user not found" in desc:
                 return False, None
@@ -119,7 +127,8 @@ async def _is_chat_member(api: TelegramAPI, chat_id: str, tg_id: str) -> Tuple[b
             return False, "chat_check_failed"
         status = (resp.get("result", {}) or {}).get("status", "")
         return status not in ("left", "kicked"), None
-    except Exception:
+    except Exception as e:
+        logger.warning("getChatMember exception: chat_id=%s user_id=%s error=%s", chat_id, tg_id, e)
         return False, "chat_check_failed"
 
 
