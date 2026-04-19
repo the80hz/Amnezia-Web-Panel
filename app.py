@@ -155,6 +155,37 @@ def _safe_int(value, default=0):
         return default
 
 
+def _parse_any_dt(value):
+    v = str(value or '').strip()
+    if not v:
+        return datetime.min
+
+    try:
+        return datetime.fromisoformat(v.replace('Z', '+00:00'))
+    except Exception:
+        pass
+
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M'):
+        try:
+            return datetime.strptime(v, fmt)
+        except Exception:
+            continue
+
+    return datetime.min
+
+
+def _sort_connections_newest_first(connections: list):
+    return sorted(connections, key=lambda c: _parse_any_dt(c.get('created_at', '')), reverse=True)
+
+
+def _sort_clients_newest_first(clients: list):
+    def _client_dt(client: dict):
+        ud = client.get('userData', {}) or {}
+        return _parse_any_dt(ud.get('creationDate', ''))
+
+    return sorted(clients, key=_client_dt, reverse=True)
+
+
 def _format_bytes(value):
     value = _safe_int(value, 0)
     units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
@@ -274,6 +305,7 @@ def _build_cached_clients_for_server_protocol(data: dict, latest_state: dict, se
             'online': None,
             'userData': {
                 'clientName': uc.get('name', ''),
+                'creationDate': uc.get('created_at', ''),
                 'enabled': True,
                 'latestHandshake': '',
                 'dataReceived': '',
@@ -1114,6 +1146,7 @@ async def my_connections_page(request: Request):
     data = load_data()
     latest_state = load_latest_state()
     conns = [c for c in data.get('user_connections', []) if c['user_id'] == user['id']]
+    conns = _sort_connections_newest_first(conns)
     # Enrich with server names
     for c in conns:
         sid = c.get('server_id', 0)
@@ -1639,10 +1672,14 @@ async def api_get_connections(request: Request, server_id: int, protocol: str = 
                 if uc.get('client_id') == cid and uc.get('server_id') == server_id and uc.get('protocol') == protocol:
                     uid = uc.get('user_id')
                     u = users_map.get(uid)
+                    user_data = client.setdefault('userData', {})
+                    if not user_data.get('creationDate') and uc.get('created_at'):
+                        user_data['creationDate'] = uc.get('created_at')
                     if u:
                         client['assigned_user'] = u['username']
                         client['assigned_user_id'] = uid
                     break
+        clients = _sort_clients_newest_first(clients)
         return {
             'clients': clients,
             'source': source,
@@ -2123,6 +2160,7 @@ async def api_get_user_connections(request: Request, user_id: str):
     data = load_data()
     latest_state = load_latest_state()
     conns = [c for c in data.get('user_connections', []) if c['user_id'] == user_id]
+    conns = _sort_connections_newest_first(conns)
     for c in conns:
         sid = c.get('server_id', 0)
         if sid < len(data['servers']):
@@ -2141,6 +2179,7 @@ async def api_my_connections(request: Request):
     data = load_data()
     latest_state = load_latest_state()
     conns = [c for c in data.get('user_connections', []) if c['user_id'] == user['id']]
+    conns = _sort_connections_newest_first(conns)
     for c in conns:
         sid = c.get('server_id', 0)
         if sid < len(data['servers']):

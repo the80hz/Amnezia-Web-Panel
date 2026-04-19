@@ -6,6 +6,7 @@ Runs as a background asyncio task alongside the FastAPI app.
 import asyncio
 import logging
 from typing import Optional, Callable
+from datetime import datetime
 
 import httpx
 
@@ -102,6 +103,29 @@ def _find_user(load_data_fn: Callable, tg_id: str):
     return None
 
 
+def _parse_dt(value: str):
+    v = str(value or "").strip()
+    if not v:
+        return datetime.min
+
+    try:
+        return datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except Exception:
+        pass
+
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"):
+        try:
+            return datetime.strptime(v, fmt)
+        except Exception:
+            continue
+
+    return datetime.min
+
+
+def _sort_connections_newest_first(conns: list) -> list:
+    return sorted(conns, key=lambda c: _parse_dt(c.get("created_at", "")), reverse=True)
+
+
 def _build_connections_keyboard(conns: list, data: dict) -> dict:
     """Build inline keyboard where each button = one connection."""
     rows = []
@@ -143,6 +167,7 @@ async def _handle_start(api: TelegramAPI, msg: dict, load_data_fn: Callable):
 
     data = load_data_fn()
     conns = [c for c in data.get("user_connections", []) if c["user_id"] == panel_user["id"]]
+    conns = _sort_connections_newest_first(conns)
 
     if not conns:
         await api.send_message(
@@ -176,6 +201,7 @@ async def _handle_refresh(
         return
     data = load_data_fn()
     conns = [c for c in data.get("user_connections", []) if c["user_id"] == panel_user["id"]]
+    conns = _sort_connections_newest_first(conns)
     if not conns:
         await api.edit_message(chat_id, message_id, "You have no connections.")
         return
