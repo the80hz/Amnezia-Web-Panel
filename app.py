@@ -201,6 +201,14 @@ def _format_bytes(value):
     return f"{size:.2f} {units[idx]}"
 
 
+def _normalize_server_emoji(value: str) -> str:
+    emoji = str(value or '').strip()
+    if not emoji:
+        return '🖥'
+    # Keep first visible symbol; this is enough for typical single-emoji usage.
+    return emoji[:2]
+
+
 def _detect_online_status(protocol: str, user_data: dict):
     handshake = (user_data.get('latestHandshake') or '').strip()
     if handshake:
@@ -710,6 +718,7 @@ class AddServerRequest(BaseModel):
     password: str = ''
     private_key: str = ''
     name: str = ''
+    emoji: str = '🖥'
 
 
 class InstallProtocolRequest(BaseModel):
@@ -938,6 +947,12 @@ async def startup():
         }
         changed = True
         logger.info("Migrated SSL settings")
+
+    # Server emoji migration
+    for s in data.get('servers', []):
+        if 'emoji' not in s or not str(s.get('emoji', '')).strip():
+            s['emoji'] = '🖥'
+            changed = True
 
     if changed:
         save_data(data)
@@ -1197,8 +1212,10 @@ async def my_connections_page(request: Request):
         sid = c.get('server_id', 0)
         if sid < len(data['servers']):
             c['server_name'] = data['servers'][sid].get('name', data['servers'][sid].get('host', ''))
+            c['server_emoji'] = data['servers'][sid].get('emoji', '🖥')
         else:
             c['server_name'] = 'Unknown'
+            c['server_emoji'] = '🖥'
     _attach_latest_state_to_connections(conns, latest_state)
     return tpl(request, 'my_connections.html', connections=conns, servers=data.get('servers', []), max_my_connections=10)
 
@@ -1262,6 +1279,7 @@ async def api_add_server(request: Request, req: AddServerRequest):
         host = req.host.strip()
         username = req.username.strip()
         name = req.name.strip() or host
+        emoji = _normalize_server_emoji(req.emoji)
         if not host or not username:
             return JSONResponse({'error': 'Host and username are required'}, status_code=400)
         if not req.password and not req.private_key:
@@ -1278,6 +1296,7 @@ async def api_add_server(request: Request, req: AddServerRequest):
         server = {
             'name': name, 'host': host, 'ssh_port': req.ssh_port,
             'username': username, 'password': req.password,
+            'emoji': emoji,
             'private_key': req.private_key, 'server_info': server_info,
             'protocols': {},
         }
@@ -2257,6 +2276,9 @@ async def api_get_user_connections(request: Request, user_id: str):
         sid = c.get('server_id', 0)
         if sid < len(data['servers']):
             c['server_name'] = data['servers'][sid].get('name', '')
+            c['server_emoji'] = data['servers'][sid].get('emoji', '🖥')
+        else:
+            c['server_emoji'] = '🖥'
     _attach_latest_state_to_connections(conns, latest_state)
     return {'connections': conns}
 
@@ -2276,8 +2298,10 @@ async def api_my_connections(request: Request):
         sid = c.get('server_id', 0)
         if sid < len(data['servers']):
             c['server_name'] = data['servers'][sid].get('name', '')
+            c['server_emoji'] = data['servers'][sid].get('emoji', '🖥')
         else:
             c['server_name'] = 'Unknown'
+            c['server_emoji'] = '🖥'
     _attach_latest_state_to_connections(conns, latest_state)
     return {'connections': conns}
 
@@ -2409,8 +2433,10 @@ async def api_share_connections(token: str, request: Request):
         sid = c['server_id']
         if sid < len(data['servers']):
             c['server_name'] = data['servers'][sid].get('name') or data['servers'][sid]['host']
+            c['server_emoji'] = data['servers'][sid].get('emoji', '🖥')
         else:
             c['server_name'] = 'Unknown'
+            c['server_emoji'] = '🖥'
             
     return {'connections': conns, 'username': user['username']}
 

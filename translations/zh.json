@@ -18,6 +18,7 @@
     "add_server": "添加服务器",
     "no_servers": "尚未添加服务器",
     "name": "名称",
+    "server_emoji": "服务器表情",
     "host": "地址",
     "port": "端口",
     "status": "状态",

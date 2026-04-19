@@ -18,6 +18,7 @@
     "add_server": "Ajouter un serveur",
     "no_servers": "Aucun serveur ajouté",
     "name": "Nom",
+    "server_emoji": "Emoji du serveur",
     "host": "Hôte",
     "port": "Port",
     "status": "Statut",

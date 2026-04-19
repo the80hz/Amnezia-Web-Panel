@@ -21,7 +21,7 @@
 <div class="card" style="margin-bottom: var(--space-xl);">
     <div class="flex items-center justify-between" style="flex-wrap: wrap; gap: var(--space-md);">
         <div class="flex items-center gap-md">
-            <div class="server-icon" style="width:56px; height:56px; font-size:1.6rem;">🖥</div>
+            <div class="server-icon" style="width:56px; height:56px; font-size:1.6rem;">{{ server.emoji or '🖥' }}</div>
             <div>
                 <h1 style="font-size:1.4rem; font-weight:700;">{{ server.name }}</h1>
                 <div class="font-mono text-muted text-sm">{{ server.host }}:{{ server.ssh_port }} • {{ server.username

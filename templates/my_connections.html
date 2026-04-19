@@ -30,7 +30,7 @@
                 <div>
                     <div class="client-name">{{ c.name or 'VPN Connection' }}</div>
                     <div class="client-meta">
-                        <span>🖥 {{ c.server_name }}</span>
+                        <span>{{ c.server_emoji or '🖥' }} {{ c.server_name }}</span>
                         <span class="badge badge-info" style="font-size:0.65rem;">
                             {{ 'AmneziaWG' if c.protocol == 'awg' else ('AmneziaWG 2.0' if c.protocol == 'awg2' else ('AWG Legacy' if c.protocol == 'awg_legacy' else
                             ('Xray' if c.protocol == 'xray' else c.protocol | upper))) }}

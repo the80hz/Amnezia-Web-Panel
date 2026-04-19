@@ -17,7 +17,7 @@
         {% for server in servers %}
         <div class="card card-hover server-card" id="server-{{ loop.index0 }}">
             <div class="server-meta">
-                <div class="server-icon">🖥</div>
+                <div class="server-icon">{{ server.emoji or '🖥' }}</div>
                 <div>
                     <div class="server-name">{{ server.name }}</div>
                     <div class="server-host">{{ server.host }}:{{ server.ssh_port }}</div>
@@ -81,6 +81,11 @@
             <div class="form-group">
                 <label class="form-label">{{ _('name') }}</label>
                 <input class="form-input" type="text" id="serverName" placeholder="My VPN Server">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">{{ _('server_emoji') }}</label>
+                <input class="form-input" type="text" id="serverEmoji" maxlength="4" placeholder="🖥" value="🖥">
             </div>
 
             <div class="form-row">
@@ -159,6 +164,7 @@
         try {
             const data = {
                 name: document.getElementById('serverName').value,
+                emoji: document.getElementById('serverEmoji').value,
                 host: document.getElementById('serverHost').value,
                 ssh_port: parseInt(document.getElementById('serverPort').value) || 22,
                 username: document.getElementById('serverUser').value,
