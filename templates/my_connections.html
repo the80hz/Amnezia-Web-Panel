@@ -11,11 +11,11 @@
         </h1>
         <div class="flex items-center" style="gap: var(--space-sm);">
             <span class="badge badge-info" style="font-size: 0.75rem;">
-                {{ connections|length }}/{{ max_my_connections or 10 }}
+                {{ connections|length }}/{{ max_my_connections or 30 }}
             </span>
             <button class="btn btn-primary btn-sm"
                 onclick="openModal('addMyConnModal')"
-                {% if (connections|length) >= (max_my_connections or 10) %}disabled{% endif %}>
+                {% if (connections|length) >= (max_my_connections or 30) %}disabled{% endif %}>
                 ＋ {{ _('add_connection') }}
             </button>
         </div>
@@ -185,7 +185,7 @@
     let currentVpnLink = '';
     let currentConfigName = 'connection';
     const MY_SERVERS = {{ servers|tojson }};
-    const MY_MAX_CONNECTIONS = {{ max_my_connections or 10 }};
+    const MY_MAX_CONNECTIONS = {{ max_my_connections or 30 }};
     const MY_CURRENT_CONNECTIONS = {{ connections|length }};
 
     function refreshMyConnProtocols() {

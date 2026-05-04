@@ -362,8 +362,8 @@ async def _create_connection_for_user(
 
     data = load_data_fn()
     my_conns = [c for c in data.get("user_connections", []) if c.get("user_id") == panel_user["id"]]
-    if panel_user.get("role") == "user" and len(my_conns) >= 10:
-        raise RuntimeError("Maximum 10 connections per user reached")
+    if panel_user.get("role") == "user" and len(my_conns) >= 30:
+        raise RuntimeError("Maximum 30 connections per user reached")
 
     if server_id < 0 or server_id >= len(data.get("servers", [])):
         raise RuntimeError("Server not found")

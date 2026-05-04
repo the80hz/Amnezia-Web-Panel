@@ -1261,7 +1261,7 @@ async def my_connections_page(request: Request):
             c['server_name'] = 'Unknown'
             c['server_emoji'] = '🖥'
     _attach_latest_state_to_connections(conns, latest_state)
-    return tpl(request, 'my_connections.html', connections=conns, servers=data.get('servers', []), max_my_connections=10)
+    return tpl(request, 'my_connections.html', connections=conns, servers=data.get('servers', []), max_my_connections=30)
 
 
 # ======================== AUTH API ========================
@@ -2360,8 +2360,8 @@ async def api_my_add_connection(request: Request, req: MyAddConnectionRequest):
     try:
         data = load_data()
         my_conns = [c for c in data.get('user_connections', []) if c.get('user_id') == user['id']]
-        if user.get('role') == 'user' and len(my_conns) >= 10:
-            return JSONResponse({'error': 'Maximum 10 connections per user reached'}, status_code=400)
+        if user.get('role') == 'user' and len(my_conns) >= 30:
+            return JSONResponse({'error': 'Maximum 30 connections per user reached'}, status_code=400)
 
         if req.server_id < 0 or req.server_id >= len(data.get('servers', [])):
             return JSONResponse({'error': 'Server not found'}, status_code=404)
