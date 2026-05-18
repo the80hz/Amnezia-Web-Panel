@@ -69,42 +69,32 @@ class TelegramAPI:
         )
         data = r.json()
         if data.get("ok"):
-            return data["result"]
-        return []
+            try:
+                from managers.wireguard_manager import WireGuardManager
+                from managers.telemt_manager import TelemtManager
 
-    async def send_message(self, chat_id, text: str, reply_markup=None, parse_mode="HTML") -> dict:
-        import json
-        params = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
-        if reply_markup:
-            params["reply_markup"] = json.dumps(reply_markup)
-        return (await self.call("sendMessage", **params))
-
-    async def edit_message(self, chat_id, message_id, text: str, reply_markup=None, parse_mode="HTML"):
-        import json
-        params = {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": parse_mode}
-        if reply_markup:
-            params["reply_markup"] = json.dumps(reply_markup)
-        await self.call("editMessageText", **params)
-
-    async def answer_callback(self, callback_query_id: str, text: str = ""):
-        await self.call("answerCallbackQuery", callback_query_id=callback_query_id, text=text)
-
-    async def send_document(self, chat_id, filename: str, content: bytes, caption: str = "", parse_mode: str = "HTML"):
-        files = {"document": (filename, content, "text/plain")}
-        data = {"chat_id": str(chat_id), "caption": caption, "parse_mode": parse_mode}
-        r = await self.client.post(f"{self.base}/sendDocument", data=data, files=files, timeout=30)
-        return r.json()
-
-
-# ----------------------------------------------------------------------- #
-#  Helpers
-# ----------------------------------------------------------------------- #
-def _find_user(load_data_fn: Callable, tg_id: str):
-    data = load_data_fn()
-    tg_id_clean = str(tg_id).lstrip("@")
-    for u in data.get("users", []):
-        stored = str(u.get("telegramId", "") or "").lstrip("@")
-        if stored and stored == tg_id_clean:
+                if proto == "xray":
+                    mgr = XrayManager(ssh)
+                    return mgr.get_client_config(proto, conn["client_id"], server["host"], port)
+                if proto == "wireguard":
+                    mgr = WireGuardManager(ssh)
+                    return mgr.get_client_config(conn["client_id"], server["host"])
+                if proto == "telemt":
+                    mgr = TelemtManager(ssh)
+                    return mgr.get_client_config(proto, conn["client_id"], server["host"], port)
+                # awg, awg2, awg_legacy
+                mgr = AWGManager(ssh)
+                return mgr.get_client_config(proto, conn["client_id"], server["host"], port)
+            except RuntimeError as e:
+                # Imported legacy profiles may not have private key on server.
+                # In that case serve locally stored imported config.
+                if "private key not stored" in str(e).lower():
+                    imported_cfg = conn.get("imported_config", "")
+                    if imported_cfg:
+                        return imported_cfg
+                raise
+            finally:
+                ssh.disconnect()
             return u
     return None
 
@@ -151,60 +141,7 @@ def _find_user_by_username(users: list, username: str):
         return None
     for u in users:
         stored = str(u.get("telegramId", "") or "").strip().lstrip("@").lower()
-        if stored == uname:
             return u
-    return None
-
-
-def _hash_password(password: str) -> str:
-    salt = secrets.token_hex(16)
-    h = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100000)
-    return f"{salt}${h.hex()}"
-
-
-def _build_panel_url(data: dict) -> str:
-    settings = data.get("settings", {})
-    tg = settings.get("telegram", {})
-    custom_panel_url = str(tg.get("panel_url", "") or "").strip()
-    if custom_panel_url:
-        return custom_panel_url
-
-    ssl = settings.get("ssl", {})
-    domain = str(ssl.get("domain", "") or "").strip()
-    panel_port = int(ssl.get("panel_port", 5000) or 5000)
-    ssl_enabled = bool(ssl.get("enabled"))
-
-    if domain:
-        if ssl_enabled:
-            if panel_port == 443:
-                return f"https://{domain}"
-            return f"https://{domain}:{panel_port}"
-        if panel_port == 80:
-            return f"http://{domain}"
-        return f"http://{domain}:{panel_port}"
-
-    return "http://127.0.0.1:5000"
-
-
-def _ensure_unique_username(base: str, users: list) -> str:
-    existing = {str(u.get("username", "")).lower() for u in users}
-    candidate = base
-    idx = 1
-    while candidate.lower() in existing:
-        idx += 1
-        candidate = f"{base}_{idx}"
-    return candidate
-
-
-def _find_or_create_user_for_web_access(load_data_fn: Callable, save_data_fn: Callable, tg_id: str, tg_username_with_at: str, password: str):
-    data = load_data_fn()
-    users = data.get("users", [])
-
-    user = _find_user_by_tg_id(users, tg_id)
-    if not user and tg_username_with_at:
-        user = _find_user_by_username(users, tg_username_with_at)
-
-    was_created = False
     if user:
         user["telegramId"] = tg_id
         user["password_hash"] = _hash_password(password)
@@ -836,9 +773,9 @@ async def _handle_get_config(
     try:
         import sys, os
         sys.path.insert(0, os.path.dirname(__file__))
-        from ssh_manager import SSHManager
-        from awg_manager import AWGManager
-        from xray_manager import XrayManager
+        from managers.ssh_manager import SSHManager
+        from managers.awg_manager import AWGManager
+        from managers.xray_manager import XrayManager
 
         ssh = SSHManager(
             server["host"],
@@ -854,10 +791,20 @@ async def _handle_get_config(
         def _get_cfg():
             ssh.connect()
             try:
+                from managers.wireguard_manager import WireGuardManager
+                from managers.telemt_manager import TelemtManager
+
                 if proto == "xray":
                     mgr = XrayManager(ssh)
-                else:
-                    mgr = AWGManager(ssh)
+                    return mgr.get_client_config(proto, conn["client_id"], server["host"], port)
+                if proto == "wireguard":
+                    mgr = WireGuardManager(ssh)
+                    return mgr.get_client_config(conn["client_id"], server["host"])
+                if proto == "telemt":
+                    mgr = TelemtManager(ssh)
+                    return mgr.get_client_config(proto, conn["client_id"], server["host"], port)
+                # awg, awg2, awg_legacy
+                mgr = AWGManager(ssh)
                 return mgr.get_client_config(proto, conn["client_id"], server["host"], port)
             except RuntimeError as e:
                 # Imported legacy profiles may not have private key on server.
@@ -877,17 +824,11 @@ async def _handle_get_config(
             return
 
         vpn_link = generate_vpn_link_fn(config) if config else ""
-
         await _send_profile_document(api, chat_id, conn_name, vpn_link, config)
 
-    except Exception as e:
-        logger.exception("Bot: error getting config")
-        await api.send_message(chat_id, f"❌ Error: {html.escape(str(e))}")
-
-
-# ----------------------------------------------------------------------- #
-#  Main polling loop
-# ----------------------------------------------------------------------- #
+    # ----------------------------------------------------------------------- #
+    #  Main polling loop
+    # ----------------------------------------------------------------------- #
 async def _run_bot(token: str, load_data_fn: Callable, save_data_fn: Callable, generate_vpn_link_fn: Callable):
     offset = 0
     logger.info("Telegram bot started (raw httpx polling).")
