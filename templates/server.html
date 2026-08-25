@@ -127,7 +127,11 @@
         <div class="flex items-center gap-md">
             <div class="server-icon" style="width:56px; height:56px; font-size:1.6rem;">{{ server.emoji or '🖥' }}</div>
             <div>
-                <h1 style="font-size:1.4rem; font-weight:700;">{{ server.name }}</h1>
+                <h1 style="font-size:1.4rem; font-weight:700;">{{ server.name }}
+                    {% if server.paused %}
+                    <span class="badge badge-danger" style="vertical-align: middle;">⏸ {{ _('server_paused_badge') }}</span>
+                    {% endif %}
+                </h1>
                 <div class="font-mono text-muted text-sm">{{ server.host }}:{{ server.ssh_port }} • {{ server.username
                     }}</div>
             </div>
@@ -958,6 +962,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
 <script>
     const SERVER_ID = {{ server_id }};
+    const SERVER_PAUSED = {{ 'true' if server.paused else 'false' }};
     const SERVER_HOST = "{{ server.host }}";
     const MARKETPLACE_APPS = [
         { proto: 'awg3', category: 'protocols', icon: '🛡', title: 'AmneziaWG 3.1', descKey: 'awg3_desc', badge: 'NEW' },
@@ -2033,6 +2038,11 @@
         const emptyEl = document.getElementById('connectionsEmpty');
         const listEl = document.getElementById('connectionsListInner');
 
+        if (SERVER_PAUSED) {
+            loading.style.display = 'none';
+            return;
+        }
+
         if (!proto) {
             loading.style.display = 'none';
             return;
@@ -2517,7 +2527,11 @@
 
     // ========== Init ==========
     applyInstalledAppsVisibility();
-    checkServer();
-    loadServerStats();
+    if (SERVER_PAUSED) {
+        showToast('⏸ ' + _('server_paused_badge'), 'info');
+    } else {
+        checkServer();
+        loadServerStats();
+    }
 </script>
 {% endblock %}

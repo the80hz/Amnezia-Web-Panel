@@ -2788,6 +2788,8 @@ async def api_server_stats(request: Request, server_id: int):
         if server_id >= len(data['servers']):
             return JSONResponse({'error': 'Server not found'}, status_code=404)
         server = data['servers'][server_id]
+        if server.get('paused'):
+            return {'paused': True}
         ssh = get_ssh(server)
         ssh.connect()
         stats = {}
@@ -2863,6 +2865,14 @@ async def api_check_server(request: Request, server_id: int):
         if server_id >= len(data['servers']):
             return JSONResponse({'error': 'Server not found'}, status_code=404)
         server = data['servers'][server_id]
+        if server.get('paused'):
+            # No SSH to a paused server: answer instantly from saved state.
+            saved = {
+                proto: {**info, 'container_running': False, 'status_error': 'paused'}
+                for proto, info in (server.get('protocols') or {}).items()
+                if isinstance(info, dict)
+            }
+            return {'connection': 'paused', 'paused': True, 'docker_installed': True, 'protocols': saved}
         ssh = get_ssh(server)
         ssh.connect()
         # Just use awg's docker checker since it uses the same command
@@ -3498,6 +3508,8 @@ async def api_get_connections(request: Request, server_id: int, protocol: str = 
         if server_id >= len(data['servers']):
             return JSONResponse({'error': 'Server not found'}, status_code=404)
         server = data['servers'][server_id]
+        if server.get('paused'):
+            return {'clients': [], 'paused': True}
         clients = []
         source = 'live'
 
