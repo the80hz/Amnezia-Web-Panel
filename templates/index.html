@@ -33,6 +33,12 @@
             </div>
 
             <div class="server-protocols" id="server-protocols-{{ loop.index0 }}">
+                {% if server.paused %}
+                <span class="badge badge-danger">
+                    <span class="badge-dot"></span>
+                    ⏸ {{ _('server_paused_badge') }}
+                </span>
+                {% endif %}
                 {% if server.protocols %}
                 {% for proto_key, proto_val in server.protocols.items() %}
                 {% if proto_val.get('installed') %}
@@ -58,6 +64,10 @@
                 <button class="btn btn-secondary btn-sm btn-icon" onclick="openEditServer(this)"
                     title="{{ _('edit') }}">
                     ✏️
+                </button>
+                <button class="btn btn-secondary btn-sm btn-icon" onclick="togglePauseServer({{ loop.index0 }}, {{ 'false' if server.paused else 'true' }})"
+                    title="{{ _('resume_server') if server.paused else _('pause_server') }}">
+                    {{ '▶️' if server.paused else '⏸' }}
                 </button>
                 <button class="btn btn-danger btn-sm btn-icon" onclick="deleteServer({{ loop.index0 }})"
                     title="{{ _('delete') }}">
@@ -271,6 +281,16 @@
             await apiCall(`/api/servers/${serverId}/delete`, 'POST');
             showToast(_('server_deleted'), 'success');
             setTimeout(() => window.location.reload(), 500);
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    async function togglePauseServer(serverId, paused) {
+        try {
+            await apiCall(`/api/servers/${serverId}/pause`, 'POST', { paused: paused });
+            showToast(_('success'), 'success');
+            setTimeout(() => window.location.reload(), 400);
         } catch (err) {
             showToast(err.message, 'error');
         }

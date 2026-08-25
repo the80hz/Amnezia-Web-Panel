@@ -411,5 +411,9 @@
   "last_used": "آخرین استفاده",
   "bot_chat_id_label": "شناسه چت الزامی (گروه/سوپرگروه)",
   "bot_panel_url_label": "لینک پنل وب",
-  "chat_gate_exempt_label": "دسترسی به ربات بدون عضویت در چت"
+  "chat_gate_exempt_label": "دسترسی به ربات بدون عضویت در چت",
+  "server_paused_badge": "موقتا در دسترس نیست",
+  "server_paused_error": "سرور موقتا در دسترس نیست (توسط مدیر متوقف شده)",
+  "pause_server": "توقف سرور",
+  "resume_server": "ادامه سرور"
 }

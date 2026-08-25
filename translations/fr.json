@@ -411,5 +411,9 @@
   "last_used": "Dernière utilisation",
   "bot_chat_id_label": "ID du chat requis (groupe/supergroupe)",
   "bot_panel_url_label": "Lien du panneau web",
-  "chat_gate_exempt_label": "Accès au bot sans être membre du chat"
+  "chat_gate_exempt_label": "Accès au bot sans être membre du chat",
+  "server_paused_badge": "Temporairement indisponible",
+  "server_paused_error": "Le serveur est temporairement indisponible (mis en pause par l'administrateur)",
+  "pause_server": "Mettre le serveur en pause",
+  "resume_server": "Reprendre le serveur"
 }

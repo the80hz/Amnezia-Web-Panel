@@ -1740,6 +1740,10 @@ class ProtocolRequest(BaseModel):
     protocol: str = 'awg'
 
 
+class PauseServerRequest(BaseModel):
+    paused: bool = True
+
+
 class AddConnectionRequest(BaseModel):
     protocol: str = 'awg'
     name: str = 'Connection'
@@ -2068,6 +2072,8 @@ def _create_auto_backups_once(data: dict) -> dict:
     errors = []
 
     for server_id, server in enumerate(data.get('servers', [])):
+        if server.get('paused'):
+            continue
         protocols = server.get('protocols', {}) or {}
         installed_protocols = [
             proto for proto, info in protocols.items()
@@ -2211,6 +2217,9 @@ async def periodic_background_tasks():
             
             for sid, server in enumerate(data.get('servers', [])):
                 if sid not in conns_by_server: continue
+                if server.get('paused'):
+                    logger.info("Skipping traffic sync for paused server %s", server.get('name') or server.get('host'))
+                    continue
                 # Run the blocking SSH traffic scraping in a background thread!
                 server_updates, server_states = await asyncio.to_thread(
                     _scrape_server_traffic,
@@ -2420,9 +2429,11 @@ async def my_connections_page(request: Request):
         if sid < len(data['servers']):
             c['server_name'] = data['servers'][sid].get('name', data['servers'][sid].get('host', ''))
             c['server_emoji'] = data['servers'][sid].get('emoji', '🖥')
+            c['server_paused'] = bool(data['servers'][sid].get('paused'))
         else:
             c['server_name'] = 'Unknown'
             c['server_emoji'] = '🖥'
+            c['server_paused'] = False
     _attach_latest_state_to_connections(conns, latest_state)
     return tpl(request, 'my_connections.html', connections=conns, servers=data.get('servers', []), max_my_connections=30)
 
@@ -2802,6 +2813,22 @@ async def api_server_stats(request: Request, server_id: int):
                 ssh.disconnect()
             except Exception:
                 pass
+
+
+@app.post('/api/servers/{server_id}/pause', tags=["Servers"])
+async def api_pause_server(request: Request, server_id: int, req: PauseServerRequest):
+    """Pause/resume a server: paused servers are skipped by background traffic
+    sync and auto-backups, and self-service config issuance is declined."""
+    if not _check_admin(request):
+        return JSONResponse({'error': 'Forbidden'}, status_code=403)
+    data = load_data()
+    if server_id < 0 or server_id >= len(data.get('servers', [])):
+        return JSONResponse({'error': 'Server not found'}, status_code=404)
+    data['servers'][server_id]['paused'] = bool(req.paused)
+    save_data(data)
+    logger.info("Server %s %s", data['servers'][server_id].get('name') or data['servers'][server_id].get('host'),
+                'paused' if req.paused else 'resumed')
+    return {'status': 'success', 'paused': bool(req.paused)}
 
 
 @app.post('/api/servers/{server_id}/check', tags=["Servers"])
@@ -4155,6 +4182,9 @@ async def api_my_add_connection(request: Request, req: MyAddConnectionRequest):
             return JSONResponse({'error': 'Server not found'}, status_code=404)
 
         server = data['servers'][req.server_id]
+        if server.get('paused'):
+            lang = request.cookies.get('lang', 'ru')
+            return JSONResponse({'error': _t('server_paused_error', lang)}, status_code=503)
         protocol = (req.protocol or 'awg').strip()
         supported_protocols = {'awg', 'awg2', 'awg_legacy', 'xray', 'telemt'}
         if protocol not in supported_protocols:
@@ -4296,6 +4326,9 @@ async def api_share_config(token: str, connection_id: str, request: Request):
         port = proto_info.get('port', '55424')
         config = conn.get('imported_config', '')
         if not config:
+            if server.get('paused'):
+                lang = request.cookies.get('lang', 'ru')
+                return JSONResponse({'error': _t('server_paused_error', lang)}, status_code=503)
             ssh = get_ssh(server)
             ssh.connect()
             # Use appropriate manager for the protocol
@@ -4330,6 +4363,9 @@ async def api_my_connection_config(request: Request, connection_id: str):
         port = proto_info.get('port', '55424')
         config = conn.get('imported_config', '')
         if not config:
+            if server.get('paused'):
+                lang = request.cookies.get('lang', 'ru')
+                return JSONResponse({'error': _t('server_paused_error', lang)}, status_code=503)
             ssh = get_ssh(server)
             ssh.connect()
             # Use appropriate manager for the protocol (fixes Telemt/Xray not working for users)

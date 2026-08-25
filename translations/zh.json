@@ -411,5 +411,9 @@
   "last_used": "最近使用",
   "bot_chat_id_label": "必需群聊 ID（群组/超级群组）",
   "bot_panel_url_label": "Web 面板链接",
-  "chat_gate_exempt_label": "无需加入群组即可使用机器人"
+  "chat_gate_exempt_label": "无需加入群组即可使用机器人",
+  "server_paused_badge": "暂时不可用",
+  "server_paused_error": "服务器暂时不可用（已被管理员暂停）",
+  "pause_server": "暂停服务器",
+  "resume_server": "恢复服务器"
 }

@@ -392,12 +392,17 @@ def _build_connections_keyboard(conns: list, data: dict) -> dict:
     for c in conns:
         sid = c.get("server_id", 0)
         server_name = "Unknown"
+        paused = False
         if isinstance(sid, int) and sid < len(servers):
             srv = servers[sid]
             server_name = srv.get("name") or srv.get("host", "Unknown")[:20]
+            paused = bool(srv.get("paused"))
         proto = c.get("protocol", "").upper()
         name = c.get("name", "Connection")
-        label = f"🔐 {name} · {proto} · {server_name}"
+        icon = "⏸" if paused else "🔐"
+        label = f"{icon} {name} · {proto} · {server_name}"
+        if paused:
+            label += " — не работает"
         rows.append([{"text": label, "callback_data": f"cfg:{c['id']}"}])
     rows.append([{"text": "➕ Создать профиль", "callback_data": "new:start"}])
     rows.append([{"text": "🗑 Удалить профиль", "callback_data": "del:start"}])
@@ -430,7 +435,10 @@ def _build_servers_keyboard(data: dict) -> dict:
     for sid, srv in enumerate(data.get("servers", [])):
         name = srv.get("name") or srv.get("host", "Unknown")
         emoji = srv.get("emoji", "🖥")
-        rows.append([{"text": f"{emoji} {name}", "callback_data": f"new:srv:{sid}"}])
+        label = f"{emoji} {name}"
+        if srv.get("paused"):
+            label = f"⏸ {label} — временно не работает"
+        rows.append([{"text": label, "callback_data": f"new:srv:{sid}"}])
     rows.append([{"text": "⬅️ Назад", "callback_data": "refresh"}])
     return {"inline_keyboard": rows}
 
@@ -739,6 +747,8 @@ def _create_connection_for_user(
         raise RuntimeError(f"Unsupported protocol: {protocol}")
 
     server = data["servers"][server_id]
+    if server.get("paused"):
+        raise RuntimeError("Сервер временно не работает (на паузе)")
     proto_info = server.get("protocols", {}).get(protocol, {})
     if not proto_info.get("installed"):
         raise RuntimeError(f"Protocol {protocol} is not installed on selected server")
@@ -934,6 +944,19 @@ async def _handle_get_config(api: TelegramAPI, chat_id: int, message_id: int, ca
     proto = conn.get("protocol", "awg")
     conn_name = conn.get("name", "Connection")
 
+    if server.get("paused"):
+        imported_cfg = conn.get("imported_config", "")
+        if imported_cfg:
+            vpn_link = generate_vpn_link_fn(imported_cfg)
+            await _send_profile_document(api, chat_id, conn_name, vpn_link, imported_cfg)
+        else:
+            await api.send_message(
+                chat_id,
+                f"⏸ Сервер <b>{_e(server.get('name') or server.get('host', 'Unknown'))}</b> временно не работает.\n"
+                "Конфиг сейчас выдать нельзя, попробуйте позже.",
+            )
+        return
+
     try:
         proto_info = server.get("protocols", {}).get(proto, {})
         port = proto_info.get("port", "55424")
@@ -1048,6 +1071,15 @@ async def _handle_new_server(api: TelegramAPI, chat_id: int, message_id: int, ca
         await api.edit_message(chat_id, message_id, "❌ Server not found.")
         return
     server = data["servers"][sid]
+    if server.get("paused"):
+        await api.edit_message(
+            chat_id,
+            message_id,
+            f"⏸ Сервер <b>{_e(server.get('name') or server.get('host', 'Unknown'))}</b> временно не работает.\n"
+            "Попробуйте позже или выберите другой сервер.",
+            reply_markup=_build_servers_keyboard(data),
+        )
+        return
     kb = _build_protocols_keyboard(server, sid)
     await api.edit_message(chat_id, message_id, f"<b>Создание профиля</b>\nСервер: <b>{_e(server.get('name') or server.get('host', 'Unknown'))}</b>\nВыберите протокол:", reply_markup=kb)
 

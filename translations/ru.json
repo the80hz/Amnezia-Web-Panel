@@ -444,5 +444,9 @@
   "last_used": "Последнее использование",
   "bot_chat_id_label": "Chat ID обязательного чата (group/supergroup)",
   "bot_panel_url_label": "Ссылка на веб-панель",
-  "chat_gate_exempt_label": "Доступ к боту без членства в чате"
+  "chat_gate_exempt_label": "Доступ к боту без членства в чате",
+  "server_paused_badge": "Временно не работает",
+  "server_paused_error": "Сервер временно не работает (приостановлен администратором)",
+  "pause_server": "Приостановить сервер",
+  "resume_server": "Возобновить сервер"
 }

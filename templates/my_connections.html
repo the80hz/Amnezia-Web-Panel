@@ -35,6 +35,9 @@
                             {{ 'AmneziaWG' if c.protocol == 'awg' else ('AmneziaWG 3.1' if c.protocol == 'awg3' else ('AmneziaWG 2.0' if c.protocol == 'awg2' else ('AWG Legacy' if c.protocol == 'awg_legacy' else
                             ('Xray' if c.protocol == 'xray' else c.protocol | upper)))) }}
                         </span>
+                        {% if c.server_paused %}
+                        <span class="badge badge-danger" style="font-size:0.65rem;">⏸ {{ _('server_paused_badge') }}</span>
+                        {% endif %}
                         {% if c.latest_state is defined %}
                             {% if c.latest_state.online is sameas true %}
                             <span class="badge badge-success" style="font-size:0.65rem;">{{ _('online') }}</span>
@@ -104,7 +107,7 @@
             <label class="form-label">{{ _('server_label') }}</label>
             <select class="form-select" id="myConnServer" onchange="refreshMyConnProtocols()">
                 {% for s in servers %}
-                <option value="{{ loop.index0 }}">{{ s.name }} ({{ s.host }})</option>
+                <option value="{{ loop.index0 }}" {% if s.paused %}disabled{% endif %}>{{ s.name }} ({{ s.host }}){% if s.paused %} — {{ _('server_paused_badge') }}{% endif %}</option>
                 {% endfor %}
             </select>
         </div>
@@ -196,6 +199,11 @@
 
         const sid = parseInt(serverSelect.value, 10);
         const server = MY_SERVERS[sid] || {};
+        if (server.paused) {
+            protocolSelect.innerHTML = '';
+            if (hint) hint.textContent = '⏸ ' + _('server_paused_badge');
+            return;
+        }
         const protocols = server.protocols || {};
         const allowed = ['awg', 'awg2', 'awg_legacy', 'xray', 'telemt'];
 
