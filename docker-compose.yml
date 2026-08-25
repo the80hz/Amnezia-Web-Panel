@@ -1,9 +1,9 @@
 services:
   amnezia_panel:
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile
-    image: prvtpro/amnezia-panel:1.4.3
+    image: prvtpro/amnezia-panel:1.6.0
     container_name: amnezia_panel
 
     ports:

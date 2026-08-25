@@ -10,10 +10,10 @@ on:
 permissions:
   contents: write
 
-
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
@@ -32,7 +32,7 @@ jobs:
         pip install pyinstaller
         pip install -r requirements.txt
 
-    - name: Build with PyInstaller (Linux)
+    - name: Build Linux
       if: runner.os == 'Linux'
       run: |
         pyinstaller --name Amnezia-Web-Panel-Linux \
@@ -45,7 +45,7 @@ jobs:
           -y \
           -F app.py
 
-    - name: Build with PyInstaller (Windows)
+    - name: Build Windows
       if: runner.os == 'Windows'
       run: |
         pyinstaller --name Amnezia-Web-Panel-Windows `
@@ -58,7 +58,7 @@ jobs:
           -y `
           -F app.py
 
-    - name: Build with PyInstaller (macOS)
+    - name: Build macOS
       if: runner.os == 'macOS'
       run: |
         pyinstaller --name Amnezia-Web-Panel-macOS \
@@ -71,15 +71,32 @@ jobs:
           -y \
           -F app.py
 
-    - name: Upload Artifacts
+    - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: Amnezia-Web-Panel-${{ runner.os }}
-        path: dist/Amnezia-Web-Panel-*
+        name: binaries-${{ runner.os }}
+        path: dist/*
 
-    - name: Publish to GitHub Release
-      uses: softprops/action-gh-release@v2
-      if: startsWith(github.ref, 'refs/tags/')
+  release:
+    needs: build
+
+    if: startsWith(github.ref, 'refs/tags/')
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
       with:
-        files: dist/Amnezia-Web-Panel-*
+        path: artifacts
+
+    - name: Display structure
+      run: ls -R artifacts
+
+    - name: Publish Release
+      uses: softprops/action-gh-release@v2
+      with:
         generate_release_notes: true
+        files: |
+          artifacts/**/*
+

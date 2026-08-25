@@ -843,6 +843,11 @@ a:hover {
     color: #c084fc;
 }
 
+.protocol-nginx .protocol-icon {
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.2), rgba(59, 130, 246, 0.1));
+    color: #38bdf8;
+}
+
 /* ============================================================
    Promo blocks — locked teasers for not-yet-shipped features.
    They live inside .protocol-cards (a CSS grid) and span every
@@ -1680,6 +1685,65 @@ a:hover {
     background: rgba(59, 130, 246, 0.1);
     color: #3b82f6;
     border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+/* ===== Peer meta: fixed-width badges, no layout jumps ===== */
+.client-meta span {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.meta-handshake {
+    display: inline-block;
+    min-width: 88px; /* fits "🤝 59m 59s ago" */
+}
+
+.meta-handshake.meta-online {
+    color: #22c55e;
+}
+
+.traffic-down,
+.traffic-up {
+    min-width: 96px;
+    justify-content: flex-start;
+}
+
+.speed-badge {
+    min-width: 172px; /* fits "↓1023.9 KB/s ↑1023.9 KB/s" */
+    justify-content: flex-start;
+    background: rgba(128, 128, 128, 0.12);
+    color: var(--text-muted);
+    border: 1px solid transparent;
+}
+
+.speed-badge.speed-active {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    border-color: rgba(16, 185, 129, 0.25);
+}
+
+/* Pulsing dot on the avatar of a peer with a fresh handshake (< 3 min) */
+.client-avatar {
+    position: relative;
+}
+
+.avatar-online::after {
+    content: '';
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #22c55e;
+    border: 2px solid var(--bg-card, #fff);
+    animation: awp-peer-pulse 2s infinite;
+}
+
+@keyframes awp-peer-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }
+    70% { box-shadow: 0 0 0 7px rgba(34, 197, 94, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
 }
 
 /* ===== Header Navigation ===== */
