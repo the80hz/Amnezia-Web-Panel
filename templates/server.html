@@ -1168,7 +1168,7 @@
     // ========== Server Stats ==========
     async function loadServerStats() {
         try {
-            const stats = await apiCall(`/api/servers/${SERVER_ID}/stats`, 'POST');
+            const stats = await apiCall(`/api/servers/${SERVER_ID}/stats`, 'POST', null, { silent: true });
             const el = document.getElementById('serverStats');
             el.style.display = '';
             el.innerHTML = `
@@ -1192,7 +1192,7 @@
         text.textContent = _('server_checking');
         spinner.classList.remove('hidden');
         try {
-            const data = await apiCall(`/api/servers/${SERVER_ID}/check`, 'POST');
+            const data = await apiCall(`/api/servers/${SERVER_ID}/check`, 'POST', null, { silent: true });
             const statusDiv = document.getElementById('serverStatus');
             const badges = document.getElementById('statusBadges');
             statusDiv.classList.remove('hidden');
@@ -1995,7 +1995,7 @@
         if (!isPoll) loading.style.display = ''; // silent refresh on polls
         emptyEl.classList.add('hidden');
         try {
-            const data = await apiCall(`/api/servers/${SERVER_ID}/connections?protocol=${proto}`);
+            const data = await apiCall(`/api/servers/${SERVER_ID}/connections?protocol=${proto}`, 'GET', null, { silent: true });
             loading.style.display = 'none';
             if (!data.clients || data.clients.length === 0) {
                 listEl.innerHTML = '';

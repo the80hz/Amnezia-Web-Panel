@@ -285,16 +285,21 @@
             overlay.setAttribute('aria-busy', 'false');
         }
 
-        async function apiCall(url, method = 'GET', body = null) {
+        async function apiCall(url, method = 'GET', body = null, callOpts = {}) {
             const opts = {
                 method,
                 headers: { 'Content-Type': 'application/json' },
             };
             if (body) opts.body = JSON.stringify(body);
 
-            __apiPendingCounter += 1;
-            const pleaseWait = (window.I18N && window.I18N.please_wait) ? window.I18N.please_wait : 'Please wait...';
-            showGlobalWait(_('loading') + ' ' + pleaseWait);
+            // Background polls pass {silent: true} so the global overlay only
+            // appears for user-initiated actions.
+            const silent = callOpts.silent === true;
+            if (!silent) {
+                __apiPendingCounter += 1;
+                const pleaseWait = (window.I18N && window.I18N.please_wait) ? window.I18N.please_wait : 'Please wait...';
+                showGlobalWait(_('loading') + ' ' + pleaseWait);
+            }
 
             try {
                 const res = await fetch(url, opts);
@@ -311,9 +316,11 @@
                 }
                 return data;
             } finally {
-                __apiPendingCounter = Math.max(0, __apiPendingCounter - 1);
-                if (__apiPendingCounter === 0) {
-                    hideGlobalWait();
+                if (!silent) {
+                    __apiPendingCounter = Math.max(0, __apiPendingCounter - 1);
+                    if (__apiPendingCounter === 0) {
+                        hideGlobalWait();
+                    }
                 }
             }
         }
