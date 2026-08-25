@@ -29,7 +29,7 @@ _pending_inputs = {}
 _pending_profile_create: dict = {}
 _pending_web_access: dict = {}
 
-CLIENT_PROTOCOLS = {"awg", "awg2", "awg_legacy", "xray", "telemt", "wireguard"}
+CLIENT_PROTOCOLS = {"awg", "awg2", "awg3", "awg_legacy", "xray", "telemt", "wireguard"}
 SERVICE_PROTOCOLS = {"dns", "adguard", "socks5", "nginx"}
 
 
@@ -144,6 +144,7 @@ def _protocol_display_name(protocol: str) -> str:
     names = {
         "awg": "AmneziaWG",
         "awg2": "AmneziaWG 2.0",
+        "awg3": "AmneziaWG 3.1",
         "awg_legacy": "AmneziaWG Legacy",
         "xray": "Xray",
         "telemt": "Telemt",
