@@ -443,5 +443,6 @@
   "please_wait": "Please wait...",
   "last_used": "Last used",
   "bot_chat_id_label": "Required chat ID (group/supergroup)",
-  "bot_panel_url_label": "Web panel URL"
+  "bot_panel_url_label": "Web panel URL",
+  "chat_gate_exempt_label": "Bot access without chat membership"
 }

@@ -410,5 +410,6 @@
   "please_wait": "لطفاً صبر کنید...",
   "last_used": "آخرین استفاده",
   "bot_chat_id_label": "شناسه چت الزامی (گروه/سوپرگروه)",
-  "bot_panel_url_label": "لینک پنل وب"
+  "bot_panel_url_label": "لینک پنل وب",
+  "chat_gate_exempt_label": "دسترسی به ربات بدون عضویت در چت"
 }

@@ -121,6 +121,12 @@
                     placeholder="{{ _('description_label') }}"></textarea>
             </div>
 
+            <div class="form-group">
+                <label style="display: flex; align-items: center; gap: var(--space-sm); cursor: pointer;">
+                    <input type="checkbox" id="newChatGateExempt"> {{ _('chat_gate_exempt_label') }}
+                </label>
+            </div>
+
             <div class="divider"></div>
             <div style="color:var(--text-muted); font-size:0.85rem; margin-bottom:var(--space-md);">
                 {{ _('auto_conn_title') }}
@@ -234,6 +240,11 @@
                     <select class="form-select" id="editUserExpirationTime" aria-label="Expiration time"></select>
                     <button type="button" class="btn btn-secondary btn-sm" onclick="clearDateTimeFields('editUserExpiration', 'editUserExpirationTime')">Без срока</button>
                 </div>
+            </div>
+            <div class="form-group">
+                <label style="display: flex; align-items: center; gap: var(--space-sm); cursor: pointer;">
+                    <input type="checkbox" id="editUserChatGateExempt"> {{ _('chat_gate_exempt_label') }}
+                </label>
             </div>
             <div class="form-group">
                 <label class="form-label">{{ _('description_label') }}</label>
@@ -550,7 +561,7 @@
                                 onclick="openAddConnectionForUser('${u.id}', '${u.username}')" 
                                 title="${_('add_connection')}">🔗</button>
                         <button class="btn btn-secondary btn-sm btn-icon" 
-                                onclick='openEditUser({"id": "${u.id}", "username": "${u.username}", "tg": "${u.telegramId || ""}", "email": "${u.email || ""}", "desc": "${u.description || ""}", "limit": "${u.traffic_limit ? (u.traffic_limit / Math.pow(1024, 3)).toFixed(2) : 0}", "strategy": "${u.traffic_reset_strategy || 'never'}", "expiration": "${u.expiration_date || ''}"})'
+                                onclick='openEditUser({"id": "${u.id}", "username": "${u.username}", "tg": "${u.telegramId || ""}", "email": "${u.email || ""}", "desc": "${u.description || ""}", "limit": "${u.traffic_limit ? (u.traffic_limit / Math.pow(1024, 3)).toFixed(2) : 0}", "strategy": "${u.traffic_reset_strategy || 'never'}", "expiration": "${u.expiration_date || ''}", "chat_exempt": "${u.chat_gate_exempt ? "1" : ""}"})'
                                 title="${_('edit')}">✏️</button>
                         <button class="btn btn-secondary btn-sm btn-icon" onclick="openShareModal(this.dataset)"
                                 data-id="${u.id}" data-username="${u.username}" data-token="${u.share_token || ''}"
@@ -674,6 +685,7 @@
                 traffic_limit: parseFloat(document.getElementById('newTrafficLimit').value || '0'),
                 traffic_reset_strategy: document.getElementById('newTrafficResetStrategy').value,
                 expiration_date: getDateTimeValue('newExpirationDate', 'newExpirationTime'),
+                chat_gate_exempt: document.getElementById('newChatGateExempt').checked,
             };
             const serverId = document.getElementById('newUserServer').value;
             if (serverId !== '') {
@@ -987,6 +999,7 @@
         document.getElementById('editUserLimit').value = data.limit || '0';
         document.getElementById('editUserTrafficResetStrategy').value = data.strategy || 'never';
         setDateTimeValue('editUserExpiration', 'editUserExpirationTime', data.expiration);
+        document.getElementById('editUserChatGateExempt').checked = !!data.chat_exempt;
         document.getElementById('editUserPass').value = '';
         openModal('editUserModal');
     }
@@ -1028,7 +1041,8 @@
             traffic_limit: parseFloat(document.getElementById('editUserLimit').value || '0'),
             traffic_reset_strategy: document.getElementById('editUserTrafficResetStrategy').value,
             expiration_date: getDateTimeValue('editUserExpiration', 'editUserExpirationTime'),
-            password: document.getElementById('editUserPass').value || null
+            password: document.getElementById('editUserPass').value || null,
+            chat_gate_exempt: document.getElementById('editUserChatGateExempt').checked
         };
 
         btn.disabled = true;

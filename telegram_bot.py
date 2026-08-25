@@ -214,7 +214,7 @@ async def _check_chat_gate(api: TelegramAPI, chat_id: int, tg_id: str, data: dic
     """
     tg_settings = data.get("settings", {}).get("telegram", {})
     required_chat_id = str(tg_settings.get("chat_id", "") or "").strip()
-    if not required_chat_id or (panel_user and _is_admin(panel_user)):
+    if not required_chat_id or (panel_user and (_is_admin(panel_user) or panel_user.get("chat_gate_exempt"))):
         return True
 
     in_required_chat, chat_check_error = await _is_chat_member(api, required_chat_id, tg_id)
@@ -830,9 +830,8 @@ async def _handle_start(api: TelegramAPI, msg: dict, load_data_fn: Callable, sav
     users = data.get("users", [])
     panel_user = _find_user_by_tg_id(users, tg_id)
 
-    if not await _check_chat_gate(api, chat_id, tg_id, data, panel_user):
-        return
-
+    # Resolve @username links before the chat gate so per-user exemptions
+    # (chat_gate_exempt, admin role) apply to users linked by username too.
     if not panel_user and tg_username_with_at:
         panel_user = _find_user_by_username(users, tg_username_with_at)
         if panel_user and save_data_fn:
@@ -840,6 +839,9 @@ async def _handle_start(api: TelegramAPI, msg: dict, load_data_fn: Callable, sav
             panel_user["description"] = tg_username_with_at
             save_data_fn(data)
             logger.info("Telegram auto-link: user=%s tg_id=%s username=%s", panel_user.get("username"), tg_id, tg_username_with_at)
+
+    if not await _check_chat_gate(api, chat_id, tg_id, data, panel_user):
+        return
 
     if not panel_user:
         await api.send_message(

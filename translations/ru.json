@@ -443,5 +443,6 @@
   "please_wait": "Пожалуйста, подождите...",
   "last_used": "Последнее использование",
   "bot_chat_id_label": "Chat ID обязательного чата (group/supergroup)",
-  "bot_panel_url_label": "Ссылка на веб-панель"
+  "bot_panel_url_label": "Ссылка на веб-панель",
+  "chat_gate_exempt_label": "Доступ к боту без членства в чате"
 }

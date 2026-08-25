@@ -410,5 +410,6 @@
   "please_wait": "请稍候...",
   "last_used": "最近使用",
   "bot_chat_id_label": "必需群聊 ID（群组/超级群组）",
-  "bot_panel_url_label": "Web 面板链接"
+  "bot_panel_url_label": "Web 面板链接",
+  "chat_gate_exempt_label": "无需加入群组即可使用机器人"
 }

@@ -1802,6 +1802,7 @@ class AddUserRequest(BaseModel):
     telegramId: Optional[str] = None
     email: Optional[str] = None
     description: Optional[str] = None
+    chat_gate_exempt: Optional[bool] = False
     traffic_limit: Optional[float] = 0
     traffic_reset_strategy: Optional[str] = 'never'
     server_id: Optional[int] = None
@@ -1882,6 +1883,7 @@ class UpdateUserRequest(BaseModel):
     traffic_reset_strategy: Optional[str] = None
     expiration_date: Optional[str] = None
     password: Optional[str] = None
+    chat_gate_exempt: Optional[bool] = None
 
 
 
@@ -3793,6 +3795,7 @@ async def api_list_users(request: Request, search: str = '', page: int = 1, size
             'telegramId': u.get('telegramId'),
             'email': u.get('email'),
             'description': u.get('description'),
+            'chat_gate_exempt': u.get('chat_gate_exempt', False),
             'connections_count': sum(1 for c in conns if c['user_id'] == u['id']),
             'traffic_used': u.get('traffic_used', 0),
             'traffic_total': u.get('traffic_total', 0),
@@ -3835,6 +3838,7 @@ async def api_add_user(request: Request, req: AddUserRequest):
             'telegramId': req.telegramId,
             'email': req.email,
             'description': req.description,
+            'chat_gate_exempt': bool(req.chat_gate_exempt),
             'traffic_limit': int(req.traffic_limit * 1024**3) if req.traffic_limit else 0,
             'traffic_reset_strategy': req.traffic_reset_strategy or 'never',
             'traffic_used': 0,
@@ -3913,6 +3917,7 @@ async def api_update_user(request: Request, user_id: str, req: UpdateUserRequest
         if req.telegramId is not None: user['telegramId'] = req.telegramId
         if req.email is not None: user['email'] = req.email
         if req.description is not None: user['description'] = req.description
+        if req.chat_gate_exempt is not None: user['chat_gate_exempt'] = bool(req.chat_gate_exempt)
         if req.traffic_limit is not None: 
             new_limit = int(req.traffic_limit * 1024**3)
             user['traffic_limit'] = new_limit
