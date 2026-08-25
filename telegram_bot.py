@@ -687,11 +687,27 @@ async def _refresh_server_protocol_statuses_async(server: dict) -> dict:
 async def _send_profile_document(api: TelegramAPI, chat_id: int, conn_name: str, vpn_link: str, config: str):
     safe_name = html.escape(conn_name or "Connection")
     safe_link = html.escape(vpn_link or "")
+    filename = f"{(conn_name or 'connection').replace(' ', '_')}.conf"
+
+    # Telegram caps captions at 1024 chars (parsed text). awg3 links exceed it,
+    # and sendDocument then fails with 400 — send the link separately instead.
+    parsed_caption_len = len(conn_name or "Connection") + 1 + len(vpn_link or "")
+    if parsed_caption_len > 1000:
+        await api.send_document(
+            chat_id,
+            filename=filename,
+            content=(config or "").encode("utf-8"),
+            caption=f"<b>{safe_name}</b>",
+            parse_mode="HTML",
+        )
+        if vpn_link:
+            await api.send_message(chat_id, f"🔗 <b>{safe_name}</b> (tap to copy):\n<code>{safe_link}</code>")
+        return
+
     caption = (
         f"<b>{safe_name}</b>\n"
         f"<blockquote><code>{safe_link}</code></blockquote>"
     )
-    filename = f"{(conn_name or 'connection').replace(' ', '_')}.conf"
     await api.send_document(
         chat_id,
         filename=filename,
