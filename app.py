@@ -4208,7 +4208,7 @@ async def api_my_add_connection(request: Request, req: MyAddConnectionRequest):
             lang = request.cookies.get('lang', 'ru')
             return JSONResponse({'error': _t('server_paused_error', lang)}, status_code=503)
         protocol = (req.protocol or 'awg').strip()
-        supported_protocols = {'awg', 'awg2', 'awg_legacy', 'xray', 'telemt'}
+        supported_protocols = {'awg', 'awg2', 'awg3', 'awg_legacy', 'xray', 'telemt'}
         if protocol not in supported_protocols:
             return JSONResponse({'error': f'Unsupported protocol: {protocol}'}, status_code=400)
 

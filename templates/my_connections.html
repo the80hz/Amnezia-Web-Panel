@@ -205,14 +205,14 @@
             return;
         }
         const protocols = server.protocols || {};
-        const allowed = ['awg', 'awg2', 'awg_legacy', 'xray', 'telemt'];
+        const allowed = ['awg', 'awg2', 'awg3', 'awg_legacy', 'xray', 'telemt'];
 
         protocolSelect.innerHTML = '';
         allowed.forEach((p) => {
             if (protocols[p] && protocols[p].installed) {
                 const opt = document.createElement('option');
                 opt.value = p;
-                opt.textContent = p === 'awg' ? 'AmneziaWG' : (p === 'awg2' ? 'AmneziaWG 2.0' : (p === 'awg_legacy' ? 'AWG Legacy' : p.toUpperCase()));
+                opt.textContent = p === 'awg' ? 'AmneziaWG' : (p === 'awg2' ? 'AmneziaWG 2.0' : (p === 'awg3' ? 'AmneziaWG 3.1' : (p === 'awg_legacy' ? 'AWG Legacy' : p.toUpperCase())));
                 protocolSelect.appendChild(opt);
             }
         });
