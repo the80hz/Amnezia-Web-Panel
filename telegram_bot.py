@@ -114,6 +114,9 @@ class TelegramAPI:
 #  Generic helpers
 # ----------------------------------------------------------------------- #
 def _e(value) -> str:
+    if isinstance(value, BaseException) and not str(value):
+        # EOFError and friends stringify to "" — show at least the type name.
+        return html.escape(type(value).__name__)
     return html.escape(str(value if value is not None else ""))
 
 
