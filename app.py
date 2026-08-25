@@ -1174,6 +1174,28 @@ def protocol_container_name(protocol: str) -> Optional[str]:
     return name if idx <= 1 else f'{name}-{idx}'
 
 
+def sanitize_servers_for_ui(servers):
+    """Server dicts stripped down to what page JS actually needs.
+
+    Full server records carry SSH credentials (password, private_key) and must
+    never be serialized into a template with |tojson.
+    """
+    return [
+        {
+            'name': s.get('name') or s.get('host', ''),
+            'host': s.get('host', ''),
+            'emoji': s.get('emoji', '🖥'),
+            'paused': bool(s.get('paused')),
+            'protocols': {
+                proto: {'installed': bool(info.get('installed'))}
+                for proto, info in (s.get('protocols') or {}).items()
+                if isinstance(info, dict)
+            },
+        }
+        for s in servers
+    ]
+
+
 def is_valid_protocol(protocol: str) -> bool:
     return protocol_base(protocol) in BASE_PROTOCOLS
 
@@ -2410,7 +2432,7 @@ async def users_page(request: Request):
     conns = data.get('user_connections', [])
     for u in users_list:
         u['connections_count'] = sum(1 for c in conns if c['user_id'] == u['id'])
-    servers = data['servers']
+    servers = sanitize_servers_for_ui(data['servers'])
     return tpl(request, 'users.html', users=users_list, servers=servers)
 
 
@@ -2435,7 +2457,7 @@ async def my_connections_page(request: Request):
             c['server_emoji'] = '🖥'
             c['server_paused'] = False
     _attach_latest_state_to_connections(conns, latest_state)
-    return tpl(request, 'my_connections.html', connections=conns, servers=data.get('servers', []), max_my_connections=30)
+    return tpl(request, 'my_connections.html', connections=conns, servers=sanitize_servers_for_ui(data.get('servers', [])), max_my_connections=30)
 
 
 # ======================== AUTH API ========================
@@ -4506,7 +4528,7 @@ async def settings_page(request: Request):
     if not user:
         return RedirectResponse('/login')
     data = load_data()
-    return tpl(request, 'settings.html', settings=data.get('settings', {}), servers=data.get('servers', []), current_version=CURRENT_VERSION)
+    return tpl(request, 'settings.html', settings=data.get('settings', {}), servers=sanitize_servers_for_ui(data.get('servers', [])), current_version=CURRENT_VERSION)
 
 
 @app.get('/api/settings', tags=["Settings"])
