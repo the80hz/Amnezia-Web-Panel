@@ -411,6 +411,16 @@ def _build_main_actions_keyboard() -> dict:
     }
 
 
+def _build_empty_connections_keyboard() -> dict:
+    return {
+        "inline_keyboard": [
+            [{"text": "➕ Создать профиль", "callback_data": "new:start"}],
+            [{"text": "🔑 Доступ к веб-панели", "callback_data": "web:access"}],
+            [{"text": "🔄 Обновить список", "callback_data": "refresh"}],
+        ]
+    }
+
+
 def _build_servers_keyboard(data: dict) -> dict:
     rows = []
     for sid, srv in enumerate(data.get("servers", [])):
@@ -846,8 +856,8 @@ async def _send_user_connections(api: TelegramAPI, chat_id: int, panel_user: dic
         await api.send_message(
             chat_id,
             greeting + f"You are registered as <b>{_e(panel_user.get('username'))}</b>.\n\n"
-            "You have no connections yet. Please contact your administrator.",
-            reply_markup=_build_main_actions_keyboard(),
+            "You have no connections yet.",
+            reply_markup=_build_empty_connections_keyboard(),
         )
         return
 
@@ -872,7 +882,7 @@ async def _handle_refresh(api: TelegramAPI, chat_id: int, message_id: int, callb
     conns = [c for c in data.get("user_connections", []) if c.get("user_id") == panel_user.get("id")]
     conns = _sort_connections_newest_first(conns)
     if not conns:
-        await api.edit_message(chat_id, message_id, "You have no connections.", reply_markup=_build_main_actions_keyboard())
+        await api.edit_message(chat_id, message_id, "You have no connections yet.", reply_markup=_build_empty_connections_keyboard())
         return
     kb = _build_connections_keyboard(conns, data)
     await api.edit_message(chat_id, message_id, f"<b>Your connections</b> ({len(conns)}) — tap to get config:", reply_markup=kb)
