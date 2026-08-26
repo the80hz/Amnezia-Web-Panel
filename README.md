@@ -259,6 +259,11 @@ Behaviour worth knowing:
 *   After a connection succeeds through the bastion, the panel remembers that route for that host for 10
     minutes and dials the bastion first, instead of re-paying the direct timeout on every operation. A later
     direct success clears the hint.
+*   The bastion connection is pooled: one SSH login carries as many tunnels as needed, and concurrent work
+    waits for that single login rather than each opening its own. This matters because SSH hardening usually
+    rate-limits new connections — `ufw limit ssh` drops the sixth from one source inside 30 seconds, which a
+    login-per-operation design exceeds on a single dashboard refresh. Idle logins are closed after 5 minutes,
+    and editing the jump host or a server drops the pool so nothing keeps using the old credentials.
 *   Wrong credentials on the target abort immediately — no route makes a bad password work. A broken bastion
     still lets the direct route be tried.
 *   The ping indicator shows `⛓` when a server answered through the bastion.

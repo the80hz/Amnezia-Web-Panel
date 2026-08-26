@@ -12,6 +12,7 @@ opened on a bastion.
 """
 
 import paramiko
+import hashlib
 import io
 import time
 import logging
@@ -44,9 +45,17 @@ JUMP_KEEPALIVE = 30
 # each one would re-pay the direct-connect timeout before falling back.
 ROUTE_HINT_TTL = 600.0
 
-# Concurrent reachability probes allowed through a bastion at once. OpenSSH
-# defaults to MaxStartups 10:30:100, and every probe is a fresh login.
-MAX_CONCURRENT_JUMP_PROBES = 4
+# Bastion connections are pooled: one SSH login carries as many direct-tcpip
+# channels as we need. Opening a login per operation trips the rate limits SSH
+# hardening usually ships with - `ufw limit ssh` drops the 6th new connection
+# from one source inside 30s, which a single dashboard ping fan-out exceeds.
+JUMP_POOL_IDLE_TTL = 300.0
+JUMP_POOL_REAP_INTERVAL = 60.0
+
+# Concurrent channel opens through a bastion. With pooling this no longer guards
+# against a login storm (single-flight does that); it just keeps a large fan-out
+# from queueing unbounded work on one transport.
+MAX_CONCURRENT_JUMP_PROBES = 8
 _probe_slots = threading.BoundedSemaphore(MAX_CONCURRENT_JUMP_PROBES)
 
 
@@ -184,16 +193,10 @@ def _is_transient(error):
     )
 
 
-def open_jump_channel(jump, host, port, timeouts=None, channel_timeout=JUMP_CHANNEL_TIMEOUT):
-    """Open a direct-tcpip channel to (host, port) through the bastion.
-
-    Returns (bastion_client, channel); the caller owns both and must close the
-    bastion once the channel is done. The target address is handed to the
-    bastion as a string, so when it is a literal IP no DNS lookup happens on
-    either side of the hop.
-    """
-    bastion = paramiko.SSHClient()
-    bastion.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+def _dial_jump(jump, timeouts=None):
+    """Log in to a bastion and return the connected client."""
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
     kwargs = {
         'hostname': jump['host'],
@@ -210,21 +213,211 @@ def open_jump_channel(jump, host, port, timeouts=None, channel_timeout=JUMP_CHAN
         elif jump.get('password'):
             kwargs['password'] = jump['password']
 
-        bastion.connect(**kwargs)
-        transport = bastion.get_transport()
+        client.connect(**kwargs)
+        transport = client.get_transport()
         if transport is None:
             raise paramiko.ssh_exception.SSHException('jump host transport unavailable')
+        # The pooled connection outlives any single operation, so keep it warm
+        # through the idle stretches between them.
         transport.set_keepalive(JUMP_KEEPALIVE)
-        channel = transport.open_channel(
-            'direct-tcpip', (host, port), ('127.0.0.1', 0), timeout=channel_timeout
-        )
+    except Exception:
+        _close_quietly(client)
+        raise
+
+    logger.info(
+        "SSH jump host %s@%s:%s logged in (pooled)",
+        jump['username'], jump['host'], jump['port'],
+    )
+    return client
+
+
+class _JumpConnection:
+    """One pooled login to a bastion, shared by every channel opened through it."""
+
+    def __init__(self, key, jump):
+        self.key = key
+        self.jump = jump
+        # Held only while dialling, so one thread connects and the rest wait
+        # instead of each opening its own login.
+        self.dial_lock = threading.Lock()
+        self.client = None
+        self.leases = 0
+        self.retired = False
+        self.last_used = time.monotonic()
+
+    def is_alive(self):
+        if self.client is None:
+            return False
+        transport = self.client.get_transport()
+        return bool(transport and transport.is_active())
+
+
+class _JumpPool:
+    """Keeps one live SSH connection per bastion and hands out channels on it."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._entries = {}
+        self._reaper = None
+
+    @staticmethod
+    def _key(jump):
+        # Hash the credentials into the key so that editing them starts a fresh
+        # connection instead of silently reusing one authenticated with the old
+        # material. The digest never leaves this dict.
+        secret = f"{jump.get('private_key', '')}\x00{jump.get('password', '')}".encode()
+        return (jump['host'], jump['port'], jump['username'],
+                hashlib.sha256(secret).hexdigest()[:16])
+
+    def open_channel(self, jump, host, port, timeouts=None,
+                     channel_timeout=JUMP_CHANNEL_TIMEOUT):
+        """Return (lease, channel). Hand both back to release() when done."""
+        key = self._key(jump)
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                entry = _JumpConnection(key, jump)
+                self._entries[key] = entry
+            # Reserve before dropping the lock so the reaper cannot close the
+            # connection out from under us while we are dialling.
+            entry.leases += 1
+            self._ensure_reaper()
+
+        try:
+            return entry, self._open(entry, host, port, timeouts, channel_timeout)
+        except Exception:
+            self._drop_lease(entry)
+            raise
+
+    def _open(self, entry, host, port, timeouts, channel_timeout):
+        for attempt in (1, 2):
+            with entry.dial_lock:
+                if not entry.is_alive():
+                    _close_quietly(entry.client)
+                    entry.client = _dial_jump(entry.jump, timeouts)
+                client = entry.client
+
+            try:
+                channel = client.get_transport().open_channel(
+                    'direct-tcpip', (host, port), ('127.0.0.1', 0), timeout=channel_timeout
+                )
+                entry.last_used = time.monotonic()
+                return channel
+            except paramiko.ChannelException:
+                # The bastion answered - destination refused, or forwarding is
+                # administratively prohibited. Redialling changes nothing.
+                raise
+            except Exception:
+                # The pooled transport went bad between the liveness check and
+                # the open. Drop it and dial once more.
+                with entry.dial_lock:
+                    if entry.client is client:
+                        _close_quietly(entry.client)
+                        entry.client = None
+                if attempt == 2:
+                    raise
+
+    def release(self, entry, channel):
+        try:
+            channel.close()
+        except Exception:
+            pass
+        self._drop_lease(entry)
+
+    def _drop_lease(self, entry):
+        with self._lock:
+            if entry.leases > 0:
+                entry.leases -= 1
+            entry.last_used = time.monotonic()
+            # A retired connection is one the pool has already forgotten; the
+            # last operation still using it is the one that closes it.
+            done = entry.retired and entry.leases == 0
+        if done:
+            _close_quietly(entry.client)
+            entry.client = None
+
+    def close_all(self):
+        """Forget every pooled bastion, e.g. after the credentials changed.
+
+        Connections still carrying an operation are retired rather than closed,
+        so a running install is not cut off mid-command.
+        """
+        with self._lock:
+            entries = list(self._entries.values())
+            self._entries.clear()
+            for entry in entries:
+                entry.retired = True
+            idle = [e for e in entries if e.leases == 0]
+        for entry in idle:
+            _close_quietly(entry.client)
+            entry.client = None
+
+    def stats(self):
+        with self._lock:
+            return [
+                {'host': e.key[0], 'port': e.key[1], 'username': e.key[2],
+                 'alive': e.is_alive(), 'in_use': e.leases,
+                 'idle_seconds': round(time.monotonic() - e.last_used)}
+                for e in self._entries.values()
+            ]
+
+    def _ensure_reaper(self):
+        """Start the idle sweeper. Caller holds self._lock."""
+        if self._reaper is None:
+            self._reaper = threading.Thread(
+                target=self._reap, name='ssh-jump-pool-reaper', daemon=True
+            )
+            self._reaper.start()
+
+    def _reap(self):
+        while True:
+            time.sleep(JUMP_POOL_REAP_INTERVAL)
+            try:
+                now = time.monotonic()
+                stale = []
+                with self._lock:
+                    for key, entry in list(self._entries.items()):
+                        if entry.leases:
+                            continue
+                        idle_too_long = now - entry.last_used > JUMP_POOL_IDLE_TTL
+                        died = entry.client is not None and not entry.is_alive()
+                        if idle_too_long or died:
+                            stale.append(self._entries.pop(key))
+                for entry in stale:
+                    _close_quietly(entry.client)
+                    entry.client = None
+            except Exception:
+                # A sweeper that dies would silently stop reclaiming logins.
+                logger.exception("SSH jump pool reaper error")
+
+
+_JUMP_POOL = _JumpPool()
+
+
+def open_jump_channel(jump, host, port, timeouts=None, channel_timeout=JUMP_CHANNEL_TIMEOUT):
+    """Open a direct-tcpip channel to (host, port) through the bastion.
+
+    Returns (lease, channel); pass both to release_jump_channel() when done. The
+    login behind the lease is pooled and shared, so releasing closes the channel
+    and leaves the connection up for the next operation. The target address is
+    handed to the bastion as a string, so when it is a literal IP no DNS lookup
+    happens on either side of the hop.
+    """
+    try:
+        return _JUMP_POOL.open_channel(jump, host, port, timeouts, channel_timeout)
+    except JumpHostError:
+        raise
     except Exception as e:
-        _close_quietly(bastion)
         raise JumpHostError(
             f"jump host {jump['username']}@{jump['host']}:{jump['port']}: {e}"
         ) from e
 
-    return bastion, channel
+
+def release_jump_channel(lease, channel):
+    """Close a channel and return its pooled bastion connection to the pool."""
+    if lease is None:
+        return
+    _JUMP_POOL.release(lease, channel)
 
 
 def probe_via_jump(jump, host, port, timeout=8):
@@ -234,22 +427,17 @@ def probe_via_jump(jump, host, port, timeout=8):
     channel without running anything, so it cannot interleave badly with a real
     operation, and reachability checks should never queue behind an install.
 
-    It does take `_probe_slots`: a dashboard pings every card at once, and each
-    probe is a full SSH login, so an unthrottled fan-out trips the bastion's
-    MaxStartups and reads back as "server offline".
+    On a warm pool this measures the channel open alone, which is the round trip
+    we actually care about; a cold pool pays for the bastion login once.
     """
     timeouts = {'timeout': timeout, 'banner_timeout': timeout, 'auth_timeout': timeout}
     with _probe_slots:
         started = time.monotonic()
-        bastion, channel = open_jump_channel(jump, host, port, timeouts, channel_timeout=timeout)
+        lease, channel = open_jump_channel(jump, host, port, timeouts, channel_timeout=timeout)
         try:
             return round((time.monotonic() - started) * 1000)
         finally:
-            try:
-                channel.close()
-            except Exception:
-                pass
-            _close_quietly(bastion)
+            release_jump_channel(lease, channel)
 
 
 class SSHManager:
@@ -280,9 +468,11 @@ class SSHManager:
         self.jump = normalize_jump_config(jump)
         self.jump_mode = normalize_jump_mode(jump_mode) if self.jump else 'off'
         self.client = None
-        # Bastion client backing the current connection; it has to stay open
-        # for as long as the tunnelled session lives.
-        self._jump_client = None
+        # Pooled bastion connection backing the current session, plus the channel
+        # carrying it. Released - not closed - on disconnect, so the login stays
+        # available for the next operation.
+        self._jump_lease = None
+        self._jump_channel = None
         self.active_jump = None
         self._is_root = (username == 'root')
         self._slot_acquired = False
@@ -347,6 +537,16 @@ class SSHManager:
         """Drop learned routing hints (after a settings or server edit)."""
         with cls._state_lock:
             cls._route_hints.clear()
+
+    @classmethod
+    def close_jump_pool(cls):
+        """Forget pooled bastion logins (after the jump config changed)."""
+        _JUMP_POOL.close_all()
+
+    @classmethod
+    def jump_pool_state(cls):
+        """Pooled bastion connections, for diagnostics."""
+        return _JUMP_POOL.stats()
 
     def _acquire_operation_slot(self):
         """Acquire global operation slot so SSH operations execute strictly one by one."""
@@ -435,7 +635,7 @@ class SSHManager:
         """One connection attempt over one route. Raises on failure."""
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        bastion = None
+        lease = channel = None
 
         kwargs = {
             'hostname': self.host,
@@ -449,17 +649,19 @@ class SSHManager:
 
         try:
             if jump:
-                bastion, kwargs['sock'] = self._open_jump_channel(jump)
+                lease, channel = self._open_jump_channel(jump)
+                kwargs['sock'] = channel
                 # With `sock` supplied paramiko does not create the socket, so
                 # `timeout` no longer governs setup; banner/auth timeouts do.
             client.connect(**kwargs)
         except Exception:
             _close_quietly(client)
-            _close_quietly(bastion)
+            release_jump_channel(lease, channel)
             raise
 
         self.client = client
-        self._jump_client = bastion
+        self._jump_lease = lease
+        self._jump_channel = channel
         self.active_jump = jump
 
     def connect(self):
@@ -533,12 +735,13 @@ class SSHManager:
         raise last_error
 
     def disconnect(self):
-        """Close SSH connection (and the bastion hop backing it, if any)."""
+        """Close the session and hand its bastion hop back to the pool."""
         try:
             _close_quietly(self.client)
-            _close_quietly(self._jump_client)
+            release_jump_channel(self._jump_lease, self._jump_channel)
             self.client = None
-            self._jump_client = None
+            self._jump_lease = None
+            self._jump_channel = None
             self.active_jump = None
         finally:
             self._release_operation_slot()

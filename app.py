@@ -2826,6 +2826,7 @@ async def api_edit_server(request: Request, server_id: int, req: EditServerReque
         save_data(data)
         # The address or route may have changed; drop what we learned about it.
         SSHManager.forget_routes()
+        SSHManager.close_jump_pool()
         return {'status': 'success', 'server_info': server_info}
     except Exception as e:
         logger.exception("Error editing server")
@@ -4908,8 +4909,10 @@ async def save_settings(request: Request, payload: SaveSettingsRequest):
         settings['ssh_jump'] = _normalize_jump_settings(payload.ssh_jump, settings.get('ssh_jump'))
     save_data(data)
     SSHManager.set_default_settings(settings)
-    # Routing hints were learned under the old config; re-probe with the new one.
+    # Routing hints were learned under the old config, and pooled bastion logins
+    # authenticated with the old credentials; start both over.
     SSHManager.forget_routes()
+    SSHManager.close_jump_pool()
     logger.info("Settings saved (including captcha, telegram, auto backup and SSH jump host)")
 
     # Handle bot start/stop based on new telegram settings
