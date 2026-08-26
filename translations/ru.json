@@ -463,10 +463,9 @@
   "ssh_jump_password_label": "Пароль узла",
   "ssh_jump_key_label": "SSH-ключ узла",
   "ssh_jump_credential_stored": "Сохранено — оставьте пустым, чтобы не менять",
-  "ssh_jump_target_label": "Заодно проверить доступность",
-  "ssh_jump_target_none": "Только промежуточный узел",
+  "ssh_jump_target_label": "Куда проверять тоннель",
+  "ssh_jump_target_none": "До самого промежуточного узла",
   "ssh_jump_test_btn": "Проверить узел",
-  "ssh_jump_test_ok": "Промежуточный узел доступен",
   "ssh_jump_test_target_ok": "Узел видит сервер",
   "ssh_jump_test_target_fail": "Узел не видит сервер",
   "ssh_jump_host_required": "Сначала укажите адрес промежуточного узла",
@@ -475,5 +474,8 @@
   "server_jump_title": "Промежуточный узел",
   "server_jump_hint": "Переопределяет общую настройку только для этого сервера.",
   "server_jump_custom_hint": "Оставьте адрес пустым, чтобы использовать общий узел и поменять только маршрут.",
-  "server_via_jump": "через узел"
+  "server_via_jump": "через узел",
+  "ssh_jump_test_forwarding_ok": "Вход и тоннель работают",
+  "ssh_jump_test_prohibited": "Вход проходит, но узел отказывается пробрасывать. Проверь AllowTcpForwarding (и PermitOpen) в его sshd.",
+  "ssh_jump_test_forward_failed": "Вход проходит, но тоннель открыть не удалось"
 }

@@ -40,6 +40,7 @@ except ImportError:
 
 from managers.ssh_manager import (
     SSHManager,
+    classify_channel_error,
     normalize_jump_config,
     probe_via_jump,
     resolve_jump,
@@ -4931,9 +4932,14 @@ async def save_settings(request: Request, payload: SaveSettingsRequest):
 
 @app.post('/api/settings/ssh_jump/test', tags=["Settings"])
 async def api_test_ssh_jump(request: Request, req: TestJumpHostRequest):
-    """Check that the bastion accepts our credentials, and optionally that it
-    can open a tunnel to a chosen server. Lets an admin validate a jump host
-    before saving it and locking themselves out of the direct route."""
+    """Check that the bastion accepts our credentials *and* will forward.
+
+    Logging in proves very little on its own: hardened hosts commonly set
+    `AllowTcpForwarding no`, which only surfaces when a channel is opened. So
+    this always opens one - to the server the admin picked, or failing that to
+    the bastion's own SSH port, which needs no second machine to prove the
+    channel type is permitted at all.
+    """
     if not _check_admin(request):
         return JSONResponse({'error': 'Forbidden'}, status_code=403)
 
@@ -4957,23 +4963,42 @@ async def api_test_ssh_jump(request: Request, req: TestJumpHostRequest):
     except Exception as e:
         return JSONResponse({'error': f'Jump host connection failed: {e}'}, status_code=400)
 
-    result = {'status': 'success', 'jump_info': jump_info}
-
     servers = data.get('servers', [])
     if req.server_id is not None and 0 <= req.server_id < len(servers):
         server = servers[req.server_id]
-        target_host = server_ssh_host(server)
-        target_port = int(server.get('ssh_port', 22) or 22)
-        target = {'host': target_host, 'port': target_port}
-        try:
-            target['ms'] = await asyncio.to_thread(probe_via_jump, jump, target_host, target_port)
-            target['reachable'] = True
-        except Exception as e:
-            target['reachable'] = False
-            target['error'] = str(e)
-        result['target'] = target
+        forwarding = {
+            'checked': 'server',
+            'host': server_ssh_host(server),
+            'port': int(server.get('ssh_port', 22) or 22),
+            'label': server.get('name') or server_ssh_host(server),
+        }
+    else:
+        forwarding = {
+            'checked': 'self',
+            'host': '127.0.0.1',
+            'port': jump['port'],
+            'label': f"127.0.0.1:{jump['port']}",
+        }
 
-    return result
+    try:
+        forwarding['ms'] = await asyncio.to_thread(
+            probe_via_jump, jump, forwarding['host'], forwarding['port'])
+        forwarding['ok'] = True
+    except Exception as e:
+        forwarding['ok'] = False
+        forwarding['error'] = str(e)
+        forwarding['reason'] = classify_channel_error(e)
+
+    result = {
+        'status': 'success' if forwarding['ok'] else 'forwarding_failed',
+        'jump_info': jump_info,
+        'forwarding': forwarding,
+    }
+    if forwarding['ok']:
+        return result
+
+    result['error'] = f"Jump host will not forward: {forwarding['error']}"
+    return JSONResponse(result, status_code=400)
 
 
 @app.post('/api/settings/telegram/toggle', tags=["Settings"])

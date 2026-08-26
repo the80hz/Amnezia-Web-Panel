@@ -413,6 +413,26 @@ def open_jump_channel(jump, host, port, timeouts=None, channel_timeout=JUMP_CHAN
         ) from e
 
 
+def classify_channel_error(error):
+    """Why a direct-tcpip open failed, in terms an operator can act on.
+
+    'prohibited' - the bastion refuses to forward: AllowTcpForwarding is off, or
+                   PermitOpen does not cover this destination.
+    'target'     - the bastion tried and could not reach the destination.
+    'jump'       - the hop to the bastion itself failed, so forwarding was never
+                   attempted.
+    """
+    cause, seen = error, set()
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        if isinstance(cause, paramiko.ChannelException):
+            # 1 is SSH_OPEN_ADMINISTRATIVELY_PROHIBITED; anything else means the
+            # bastion accepted the request and failed to complete it.
+            return 'prohibited' if getattr(cause, 'code', None) == 1 else 'target'
+        cause = cause.__cause__
+    return 'prohibited' if 'administratively prohibited' in str(error).lower() else 'jump'
+
+
 def release_jump_channel(lease, channel):
     """Close a channel and return its pooled bastion connection to the pool."""
     if lease is None:

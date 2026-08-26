@@ -463,10 +463,9 @@
   "ssh_jump_password_label": "Jump password",
   "ssh_jump_key_label": "Jump SSH key",
   "ssh_jump_credential_stored": "Saved — leave empty to keep",
-  "ssh_jump_target_label": "Also check reachability of",
-  "ssh_jump_target_none": "Jump host only",
+  "ssh_jump_target_label": "Test the tunnel to",
+  "ssh_jump_target_none": "The jump host itself",
   "ssh_jump_test_btn": "Test jump host",
-  "ssh_jump_test_ok": "Jump host reachable",
   "ssh_jump_test_target_ok": "Jump host reaches the server",
   "ssh_jump_test_target_fail": "Jump host cannot reach the server",
   "ssh_jump_host_required": "Enter the jump host address first",
@@ -475,5 +474,8 @@
   "server_jump_title": "Jump host",
   "server_jump_hint": "Overrides the global jump host setting for this server only.",
   "server_jump_custom_hint": "Leave the address empty to use the global jump host and only change the routing.",
-  "server_via_jump": "via jump host"
+  "server_via_jump": "via jump host",
+  "ssh_jump_test_forwarding_ok": "Login and tunnel both work",
+  "ssh_jump_test_prohibited": "Login works, but the jump host refuses to forward. Check AllowTcpForwarding (and PermitOpen) in its sshd config.",
+  "ssh_jump_test_forward_failed": "Login works, but the tunnel could not be opened"
 }

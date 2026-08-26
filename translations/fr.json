@@ -430,10 +430,9 @@
   "ssh_jump_password_label": "Mot de passe du rebond",
   "ssh_jump_key_label": "Clé SSH du rebond",
   "ssh_jump_credential_stored": "Enregistré — laisser vide pour conserver",
-  "ssh_jump_target_label": "Vérifier aussi l'accès à",
-  "ssh_jump_target_none": "Hôte de rebond seulement",
+  "ssh_jump_target_label": "Tester le tunnel vers",
+  "ssh_jump_target_none": "L'hôte de rebond lui-même",
   "ssh_jump_test_btn": "Tester l'hôte de rebond",
-  "ssh_jump_test_ok": "Hôte de rebond joignable",
   "ssh_jump_test_target_ok": "L'hôte de rebond atteint le serveur",
   "ssh_jump_test_target_fail": "L'hôte de rebond n'atteint pas le serveur",
   "ssh_jump_host_required": "Indiquez d'abord l'adresse de l'hôte de rebond",
@@ -442,5 +441,8 @@
   "server_jump_title": "Hôte de rebond",
   "server_jump_hint": "Remplace le réglage global uniquement pour ce serveur.",
   "server_jump_custom_hint": "Laissez l'adresse vide pour utiliser l'hôte de rebond global et ne changer que le routage.",
-  "server_via_jump": "via le rebond"
+  "server_via_jump": "via le rebond",
+  "ssh_jump_test_forwarding_ok": "Connexion et tunnel fonctionnent",
+  "ssh_jump_test_prohibited": "La connexion passe, mais l'hôte de rebond refuse de relayer. Vérifiez AllowTcpForwarding (et PermitOpen) dans son sshd.",
+  "ssh_jump_test_forward_failed": "La connexion passe, mais le tunnel n'a pas pu être ouvert"
 }

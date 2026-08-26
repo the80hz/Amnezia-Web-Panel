@@ -430,10 +430,9 @@
   "ssh_jump_password_label": "跳板机密码",
   "ssh_jump_key_label": "跳板机 SSH 密钥",
   "ssh_jump_credential_stored": "已保存 — 留空则保持不变",
-  "ssh_jump_target_label": "同时检查可达性",
-  "ssh_jump_target_none": "仅检查跳板机",
+  "ssh_jump_target_label": "隧道测试目标",
+  "ssh_jump_target_none": "跳板机自身",
   "ssh_jump_test_btn": "测试跳板机",
-  "ssh_jump_test_ok": "跳板机可达",
   "ssh_jump_test_target_ok": "跳板机能连到该服务器",
   "ssh_jump_test_target_fail": "跳板机无法连到该服务器",
   "ssh_jump_host_required": "请先填写跳板机地址",
@@ -442,5 +441,8 @@
   "server_jump_title": "跳板机",
   "server_jump_hint": "仅对该服务器覆盖全局跳板机设置。",
   "server_jump_custom_hint": "地址留空则沿用全局跳板机，仅修改路由方式。",
-  "server_via_jump": "经由跳板机"
+  "server_via_jump": "经由跳板机",
+  "ssh_jump_test_forwarding_ok": "登录与隧道均正常",
+  "ssh_jump_test_prohibited": "登录成功，但跳板机拒绝转发。请检查其 sshd 的 AllowTcpForwarding（以及 PermitOpen）。",
+  "ssh_jump_test_forward_failed": "登录成功，但隧道无法建立"
 }

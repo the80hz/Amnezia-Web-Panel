@@ -240,7 +240,8 @@ Configure the default bastion in **Settings → SSH Jump Host**:
 | **Routing** | `Direct first, jump host on failure` probes directly with a short timeout and tunnels only when that fails. `Always through the jump host` never dials the target directly. |
 | **Host / port / user** | The bastion's SSH endpoint. |
 | **Password / SSH key** | Bastion credentials. They are never sent back to the browser — leave the field blank to keep what is stored. |
-| **Test jump host** | Logs into the bastion and, optionally, checks that it can open a tunnel to a chosen server. |
+| **Test the tunnel to** | What the test tunnels to: a chosen server, or the jump host itself when you have not added one yet. |
+| **Test jump host** | Logs in *and* opens a channel. Logging in proves little on its own — hardened hosts commonly set `AllowTcpForwarding no`, which only surfaces when a tunnel is actually opened. Failures are reported as one of three verdicts: the login failed, the host refuses to forward, or the destination is unreachable from it. |
 
 Each server can depart from the default in its own **Edit server** dialog:
 

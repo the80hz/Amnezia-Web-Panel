@@ -673,14 +673,23 @@
                 })
             });
             const json = await res.json();
-            if (!res.ok) throw new Error(json.error || _('error'));
+            const fw = json.forwarding;
 
-            if (json.target && json.target.reachable === false) {
-                showToast(`${_('ssh_jump_test_target_fail')}: ${json.target.error || ''}`, 'error');
-            } else if (json.target) {
-                showToast(`${_('ssh_jump_test_target_ok')} (${json.target.ms} ms)`, 'success');
+            // A jump host that logs in but will not forward is the failure that
+            // used to slip through, so report the tunnel, not the login.
+            if (fw && fw.ok) {
+                const what = fw.checked === 'server'
+                    ? `${_('ssh_jump_test_target_ok')}: ${fw.label}`
+                    : _('ssh_jump_test_forwarding_ok');
+                showToast(`${what} (${fw.ms} ms)`, 'success');
+            } else if (fw && fw.reason === 'prohibited') {
+                showToast(_('ssh_jump_test_prohibited'), 'error');
+            } else if (fw && fw.reason === 'target') {
+                showToast(`${_('ssh_jump_test_target_fail')}: ${fw.label}`, 'error');
+            } else if (fw) {
+                showToast(_('ssh_jump_test_forward_failed'), 'error');
             } else {
-                showToast(_('ssh_jump_test_ok'), 'success');
+                throw new Error(json.error || _('error'));
             }
         } catch (err) {
             showToast(err.message, 'error');

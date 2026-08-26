@@ -430,10 +430,9 @@
   "ssh_jump_password_label": "رمز عبور واسط",
   "ssh_jump_key_label": "کلید SSH واسط",
   "ssh_jump_credential_stored": "ذخیره شده — برای حفظ خالی بگذارید",
-  "ssh_jump_target_label": "همچنین دسترسی به این سرور بررسی شود",
-  "ssh_jump_target_none": "فقط میزبان واسط",
+  "ssh_jump_target_label": "آزمایش تونل به",
+  "ssh_jump_target_none": "خودِ میزبان واسط",
   "ssh_jump_test_btn": "آزمایش میزبان واسط",
-  "ssh_jump_test_ok": "میزبان واسط در دسترس است",
   "ssh_jump_test_target_ok": "میزبان واسط به سرور دسترسی دارد",
   "ssh_jump_test_target_fail": "میزبان واسط به سرور دسترسی ندارد",
   "ssh_jump_host_required": "ابتدا آدرس میزبان واسط را وارد کنید",
@@ -442,5 +441,8 @@
   "server_jump_title": "میزبان واسط",
   "server_jump_hint": "تنظیم کلی را فقط برای این سرور لغو می‌کند.",
   "server_jump_custom_hint": "آدرس را خالی بگذارید تا از میزبان واسط کلی استفاده شود و فقط مسیر تغییر کند.",
-  "server_via_jump": "از طریق واسط"
+  "server_via_jump": "از طریق واسط",
+  "ssh_jump_test_forwarding_ok": "ورود و تونل هر دو کار می‌کنند",
+  "ssh_jump_test_prohibited": "ورود انجام شد، اما میزبان واسط اجازهٔ تونل نمی‌دهد. AllowTcpForwarding (و PermitOpen) را در sshd آن بررسی کنید.",
+  "ssh_jump_test_forward_failed": "ورود انجام شد، اما تونل باز نشد"
 }
