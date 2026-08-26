@@ -34,13 +34,8 @@ def load_json(path: Path) -> dict:
 
 
 def make_ssh(server: dict) -> SSHManager:
-	return SSHManager(
-		host=server.get("host", ""),
-		port=server.get("ssh_port", 22),
-		username=server.get("username", "root"),
-		password=server.get("password", ""),
-		private_key=server.get("private_key", ""),
-	)
+	# for_server() honours the panel's jump-host config, installed in main().
+	return SSHManager.for_server(server)
 
 
 def fetch_remote_client_ids(server: dict, protocol: str) -> set[str]:
@@ -101,6 +96,7 @@ def main() -> None:
 		)
 
 	data = load_json(panel_data_path)
+	SSHManager.set_default_settings(data.get("settings", {}))
 	servers = data.get("servers", [])
 	users_map = {str(u.get("id")): str(u.get("username", "")) for u in data.get("users", [])}
 	user_connections = data.get("user_connections", [])

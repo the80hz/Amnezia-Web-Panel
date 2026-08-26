@@ -72,6 +72,7 @@ Configuration panel for system parameters and preferences:
 *   **⚙️ Core Server Management**:
     *   **Add / Edit / Delete / Reorder** server entries — drag-and-drop reorder updates `server_id` references in saved connections automatically.
     *   **Live ping indicator** next to each server name — non-blocking TCP-connect probe to the SSH port, runs on the asyncio loop in parallel for all servers.
+    *   **SSH jump host (bastion)** — relay the management SSH through a clean intermediate server when the direct route to port 22 is filtered. Global default plus per-server override, and a fallback mode that only tunnels after a direct attempt fails. See [SSH Jump Host](#-ssh-jump-host-bastion).
     *   **Clear server** wipes every Amnezia-related container, image and `/opt/amnezia` directory in a single sudo script — works for any current or future `amnezia-*` protocol.
     *   **Reboot** the server directly from the UI.
     *   Strictly concurrent protocol status polling — all supported protocols/services checked in parallel for immediate feedback.
@@ -223,6 +224,48 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 # Cheap reachability probe for monitoring
 curl -H "Authorization: Bearer $TOKEN" http://your-panel:5000/api/servers/0/ping
 ```
+
+### 🔗 SSH Jump Host (bastion)
+
+Some networks let the TCP handshake to port 22 complete and then kill the session during the
+SSH banner / key exchange — the client sees `kex_exchange_identification: read: Operation timed out`
+while the server itself is healthy and its VPN port keeps working. The panel can route its
+management SSH through a clean intermediate host to get around that.
+
+Configure the default bastion in **Settings → SSH Jump Host**:
+
+| Field | Meaning |
+| --- | --- |
+| **Use a jump host by default** | Master switch. Off means every server connects directly unless it overrides the setting itself. |
+| **Routing** | `Direct first, jump host on failure` probes directly with a short timeout and tunnels only when that fails. `Always through the jump host` never dials the target directly. |
+| **Host / port / user** | The bastion's SSH endpoint. |
+| **Password / SSH key** | Bastion credentials. They are never sent back to the browser — leave the field blank to keep what is stored. |
+| **Test jump host** | Logs into the bastion and, optionally, checks that it can open a tunnel to a chosen server. |
+
+Each server can depart from the default in its own **Edit server** dialog:
+
+*   **Routing** — `Use the global setting` (default), `Never`, `Direct first…`, or `Always…`. A server can
+    opt into the bastion even while the global switch is off, and opt out while it is on.
+*   **Jump host address** — leave empty to use the global bastion and change only the routing. Filling it in
+    replaces the bastion wholesale for that server (address *and* credentials together).
+*   **SSH address** — an optional literal IP the panel dials for management instead of the host name, so the
+    control connection does not depend on DNS. The host name is still what VPN clients get in their configs.
+    When tunnelling, the address is resolved by the bastion, not by the panel.
+
+Behaviour worth knowing:
+
+*   In fallback mode the direct probe uses a short banner timeout (~10 s), so a filtered host costs one probe
+    rather than the full 45 s before the tunnel is tried.
+*   After a connection succeeds through the bastion, the panel remembers that route for that host for 10
+    minutes and dials the bastion first, instead of re-paying the direct timeout on every operation. A later
+    direct success clears the hint.
+*   Wrong credentials on the target abort immediately — no route makes a bad password work. A broken bastion
+    still lets the direct route be tried.
+*   The ping indicator shows `⛓` when a server answered through the bastion.
+
+Stored under `settings.ssh_jump` in `data.json`, with per-server overrides in each server's `ssh_jump` and
+`ssh_address` keys. `POST /api/settings/save` leaves `ssh_jump` untouched when the field is omitted, so older
+clients and scripted saves cannot wipe the bastion address.
 
 ### Technology Stack
 *   **Backend**: FastAPI (Python), `asyncio` for concurrent SSH/probe work

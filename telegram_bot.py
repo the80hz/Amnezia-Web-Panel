@@ -605,13 +605,9 @@ def _get_ssh_and_manager(server: dict, proto: str):
     from managers.adguard_manager import AdguardManager
     from managers.nginx_manager import NginxManager
 
-    ssh = SSHManager(
-        server["host"],
-        server.get("ssh_port", 22),
-        server["username"],
-        server.get("password", ""),
-        server.get("private_key", ""),
-    )
+    # for_server() applies the panel's jump-host settings, which app.py keeps
+    # installed on SSHManager on every load_data().
+    ssh = SSHManager.for_server(server)
     base = _proto_base(proto)
     if base == "xray":
         manager = XrayManager(ssh, proto)

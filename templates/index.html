@@ -18,6 +18,11 @@
         <div class="card card-hover server-card" id="server-{{ loop.index0 }}" data-idx="{{ loop.index0 }}"
             data-name="{{ server.name }}" data-host="{{ server.host }}" data-port="{{ server.ssh_port }}"
             data-username="{{ server.username }}" data-auth="{{ 'key' if server.private_key else 'password' }}"
+            data-ssh-address="{{ server.ssh_address or '' }}"
+            data-jump-mode="{{ (server.ssh_jump or {}).get('mode', 'inherit') }}"
+            data-jump-host="{{ (server.ssh_jump or {}).get('host', '') }}"
+            data-jump-port="{{ (server.ssh_jump or {}).get('port', 22) }}"
+            data-jump-username="{{ (server.ssh_jump or {}).get('username', '') }}"
             draggable="true">
             <div class="server-meta">
                 <div class="server-icon">{{ server.emoji or '🖥' }}</div>
@@ -28,7 +33,7 @@
                         <span>{{ server.name }}</span>
                         <span class="ping-ms text-muted" id="ping-ms-{{ loop.index0 }}"></span>
                     </div>
-                    <div class="server-host">{{ server.host }}:{{ server.ssh_port }}</div>
+                    <div class="server-host">{{ server.ssh_address or server.host }}:{{ server.ssh_port }}</div>
                 </div>
             </div>
 
@@ -37,6 +42,12 @@
                 <span class="badge badge-danger">
                     <span class="badge-dot"></span>
                     ⏸ {{ _('server_paused_badge') }}
+                </span>
+                {% endif %}
+                {% if (server.ssh_jump or {}).get('mode', 'inherit') not in ('inherit', 'off') %}
+                <span class="badge badge-warn" title="{{ (server.ssh_jump or {}).get('host', '') }}">
+                    <span class="badge-dot"></span>
+                    ⛓ {{ _('server_via_jump') }}
                 </span>
                 {% endif %}
                 {% if server.protocols %}
@@ -146,6 +157,53 @@
                 </div>
             </div>
 
+            <div class="form-group">
+                <label class="form-label">{{ _('ssh_address_label') }}</label>
+                <input class="form-input" type="text" id="editServerSshAddress" placeholder="203.0.113.10">
+                <div class="form-hint">{{ _('ssh_address_hint') }}</div>
+            </div>
+
+            <div class="divider" style="margin: var(--space-md) 0;">⛓ {{ _('server_jump_title') }}</div>
+
+            <div class="form-group">
+                <label class="form-label">{{ _('ssh_jump_mode_label') }}</label>
+                <select class="form-input" id="editServerJumpMode" onchange="toggleJumpFields('editServer')">
+                    <option value="inherit">{{ _('ssh_jump_mode_inherit') }}</option>
+                    <option value="off">{{ _('ssh_jump_mode_off') }}</option>
+                    <option value="fallback">{{ _('ssh_jump_mode_fallback') }}</option>
+                    <option value="always">{{ _('ssh_jump_mode_always') }}</option>
+                </select>
+                <div class="form-hint">{{ _('server_jump_hint') }}</div>
+            </div>
+
+            <div id="editServerJumpFields" class="hidden">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">{{ _('ssh_jump_host_label') }}</label>
+                        <input class="form-input" type="text" id="editServerJumpHost" placeholder="167.17.178.172">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ _('ssh_jump_port_label') }}</label>
+                        <input class="form-input" type="number" id="editServerJumpPort" value="22" min="1" max="65535">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ _('ssh_jump_user_label') }}</label>
+                    <input class="form-input" type="text" id="editServerJumpUser" placeholder="root">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ _('ssh_jump_password_label') }}</label>
+                    <input class="form-input" type="password" id="editServerJumpPassword" autocomplete="new-password"
+                        placeholder="{{ _('edit_keep_credential') }}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ _('ssh_jump_key_label') }}</label>
+                    <textarea class="form-textarea" id="editServerJumpKey"
+                        placeholder="{{ _('edit_keep_credential') }}"></textarea>
+                </div>
+                <div class="form-hint">{{ _('server_jump_custom_hint') }}</div>
+            </div>
+
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" onclick="closeModal('editServerModal')">{{ _('cancel')
                     }}</button>
@@ -216,6 +274,53 @@
                 </div>
             </div>
 
+            <div class="form-group">
+                <label class="form-label">{{ _('ssh_address_label') }}</label>
+                <input class="form-input" type="text" id="serverSshAddress" placeholder="203.0.113.10">
+                <div class="form-hint">{{ _('ssh_address_hint') }}</div>
+            </div>
+
+            <div class="divider" style="margin: var(--space-md) 0;">⛓ {{ _('server_jump_title') }}</div>
+
+            <div class="form-group">
+                <label class="form-label">{{ _('ssh_jump_mode_label') }}</label>
+                <select class="form-input" id="serverJumpMode" onchange="toggleJumpFields('server')">
+                    <option value="inherit">{{ _('ssh_jump_mode_inherit') }}</option>
+                    <option value="off">{{ _('ssh_jump_mode_off') }}</option>
+                    <option value="fallback">{{ _('ssh_jump_mode_fallback') }}</option>
+                    <option value="always">{{ _('ssh_jump_mode_always') }}</option>
+                </select>
+                <div class="form-hint">{{ _('server_jump_hint') }}</div>
+            </div>
+
+            <div id="serverJumpFields" class="hidden">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">{{ _('ssh_jump_host_label') }}</label>
+                        <input class="form-input" type="text" id="serverJumpHost" placeholder="167.17.178.172">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ _('ssh_jump_port_label') }}</label>
+                        <input class="form-input" type="number" id="serverJumpPort" value="22" min="1" max="65535">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ _('ssh_jump_user_label') }}</label>
+                    <input class="form-input" type="text" id="serverJumpUser" placeholder="root">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ _('ssh_jump_password_label') }}</label>
+                    <input class="form-input" type="password" id="serverJumpPassword" autocomplete="new-password"
+                        placeholder="{{ _('edit_keep_credential') }}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ _('ssh_jump_key_label') }}</label>
+                    <textarea class="form-textarea" id="serverJumpKey"
+                        placeholder="{{ _('edit_keep_credential') }}"></textarea>
+                </div>
+                <div class="form-hint">{{ _('server_jump_custom_hint') }}</div>
+            </div>
+
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" onclick="closeModal('addServerModal')">{{ _('cancel')
                     }}</button>
@@ -259,6 +364,8 @@
                 username: document.getElementById('serverUser').value,
                 password: document.getElementById('serverPassword').value,
                 private_key: document.getElementById('serverKey').value,
+                ssh_address: document.getElementById('serverSshAddress').value.trim(),
+                ssh_jump: collectJumpOverride('server'),
             };
 
             const result = await apiCall('/api/servers/add', 'POST', data);
@@ -272,6 +379,29 @@
             btnText.textContent = _('connect');
             spinner.classList.add('hidden');
         }
+    }
+
+    /* ========== Jump host (bastion) override ========== */
+
+    // The custom-bastion fields only matter when this server departs from the
+    // global setting; 'inherit' and 'off' have nothing to configure here.
+    function toggleJumpFields(prefix) {
+        const mode = document.getElementById(`${prefix}JumpMode`).value;
+        const fields = document.getElementById(`${prefix}JumpFields`);
+        fields.classList.toggle('hidden', mode === 'inherit' || mode === 'off');
+    }
+
+    // Blank credentials mean "keep stored" - the bastion password and key are
+    // never sent to the browser, so the form cannot echo them back.
+    function collectJumpOverride(prefix) {
+        return {
+            mode: document.getElementById(`${prefix}JumpMode`).value,
+            host: document.getElementById(`${prefix}JumpHost`).value.trim(),
+            port: parseInt(document.getElementById(`${prefix}JumpPort`).value) || 22,
+            username: document.getElementById(`${prefix}JumpUser`).value.trim(),
+            password: document.getElementById(`${prefix}JumpPassword`).value || null,
+            private_key: document.getElementById(`${prefix}JumpKey`).value || null,
+        };
     }
 
     async function deleteServer(serverId) {
@@ -317,6 +447,14 @@
         document.getElementById('editServerUser').value = card.dataset.username || '';
         document.getElementById('editServerPassword').value = '';
         document.getElementById('editServerKey').value = '';
+        document.getElementById('editServerSshAddress').value = card.dataset.sshAddress || '';
+        document.getElementById('editServerJumpMode').value = card.dataset.jumpMode || 'inherit';
+        document.getElementById('editServerJumpHost').value = card.dataset.jumpHost || '';
+        document.getElementById('editServerJumpPort').value = card.dataset.jumpPort || '22';
+        document.getElementById('editServerJumpUser').value = card.dataset.jumpUsername || '';
+        document.getElementById('editServerJumpPassword').value = '';
+        document.getElementById('editServerJumpKey').value = '';
+        toggleJumpFields('editServer');
 
         // Pre-select the tab matching the server's current auth method.
         const authIsKey = card.dataset.auth === 'key';
@@ -346,6 +484,8 @@
                 // Empty -> null means "leave unchanged" on the backend.
                 password: document.getElementById('editServerPassword').value || null,
                 private_key: document.getElementById('editServerKey').value || null,
+                ssh_address: document.getElementById('editServerSshAddress').value.trim(),
+                ssh_jump: collectJumpOverride('editServer'),
             };
             await apiCall(`/api/servers/${idx}/edit`, 'POST', body);
             showToast(_('server_saved'), 'success');
@@ -372,8 +512,9 @@
             dot.classList.remove('ping-pending');
             if (data.alive) {
                 dot.classList.add('ping-ok');
-                dot.title = `${data.ms} ms`;
-                if (ms) ms.textContent = `${data.ms} ms`;
+                const viaJump = data.via === 'jump';
+                dot.title = viaJump ? `${data.ms} ms - ${_('server_via_jump')}` : `${data.ms} ms`;
+                if (ms) ms.textContent = viaJump ? `⛓ ${data.ms} ms` : `${data.ms} ms`;
             } else {
                 dot.classList.add('ping-fail');
                 dot.title = data.error || _('offline');

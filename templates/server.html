@@ -132,8 +132,9 @@
                     <span class="badge badge-danger" style="vertical-align: middle;">⏸ {{ _('server_paused_badge') }}</span>
                     {% endif %}
                 </h1>
-                <div class="font-mono text-muted text-sm">{{ server.host }}:{{ server.ssh_port }} • {{ server.username
-                    }}</div>
+                <div class="font-mono text-muted text-sm">{{ server.ssh_address or server.host }}:{{ server.ssh_port
+                    }} • {{ server.username }}{% if (server.ssh_jump or {}).get('mode', 'inherit') not in ('inherit',
+                    'off') %} • ⛓ {{ _('server_via_jump') }}{% endif %}</div>
             </div>
         </div>
         <div class="flex gap-sm items-center">

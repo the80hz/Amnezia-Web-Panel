@@ -193,9 +193,9 @@ docker compose version
 
         # Patch public_host and public_port for links
         if "public_host =" in config_content or "# public_host =" in config_content:
-            config_content = re.sub(r'#?\s*public_host\s*=\s*".*?"', f'public_host = "{self.ssh.host}"', config_content)
+            config_content = re.sub(r'#?\s*public_host\s*=\s*".*?"', f'public_host = "{self.ssh.public_host}"', config_content)
         else:
-            config_content = config_content.replace('[general.links]', f'[general.links]\npublic_host = "{self.ssh.host}"')
+            config_content = config_content.replace('[general.links]', f'[general.links]\npublic_host = "{self.ssh.public_host}"')
             
         config_content = re.sub(r'public_port\s*=\s*\d+', f'public_port = {port}', config_content)
         

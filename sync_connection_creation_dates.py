@@ -186,13 +186,7 @@ def sync_for_server_protocol(
     if not conns:
         return [], False, False
 
-    ssh = SSHManager(
-        host=server["host"],
-        port=server.get("ssh_port", 22),
-        username=server["username"],
-        password=server.get("password"),
-        private_key=server.get("private_key"),
-    )
+    ssh = SSHManager.for_server(server)
 
     changes: List[Change] = []
     remote_changed = False
@@ -291,13 +285,7 @@ def import_backup_to_remote(
     if not proto_info.get("installed"):
         return [], False
 
-    ssh = SSHManager(
-        host=server["host"],
-        port=server.get("ssh_port", 22),
-        username=server["username"],
-        password=server.get("password"),
-        private_key=server.get("private_key"),
-    )
+    ssh = SSHManager.for_server(server)
 
     changes: List[Change] = []
     remote_changed = False
@@ -396,6 +384,7 @@ def main() -> int:
         return 2
 
     data = load_json(data_path)
+    SSHManager.set_default_settings(data.get("settings", {}))
     servers = data.get("servers", [])
 
     backup_mode = bool((args.backup_clients_table or "").strip())

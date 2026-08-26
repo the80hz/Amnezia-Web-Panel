@@ -38,7 +38,13 @@ try:
 except ImportError:
     CaptchaGenerator = None
 
-from managers.ssh_manager import SSHManager
+from managers.ssh_manager import (
+    SSHManager,
+    normalize_jump_config,
+    probe_via_jump,
+    resolve_jump,
+    server_ssh_host,
+)
 from managers.awg_manager import AWGManager
 from managers.xray_manager import XrayManager
 from managers.wireguard_manager import WireGuardManager
@@ -204,6 +210,18 @@ def load_data():
         'last_created_count': 0,
         'last_error': None
     })
+    settings.setdefault('ssh_jump', {
+        'enabled': False,
+        'mode': 'fallback',
+        'host': '',
+        'port': 22,
+        'username': 'root',
+        'password': '',
+        'private_key': ''
+    })
+    # Keep the jump-host config visible to callers that build an SSHManager
+    # without a settings dict at hand (Telegram bot, background jobs).
+    SSHManager.set_default_settings(settings)
     return data
 
 
@@ -438,14 +456,120 @@ async def save_data_async(data):
         await asyncio.to_thread(save_data, data)
 
 
-def get_ssh(server):
-    return SSHManager(
-        host=server['host'],
-        port=server.get('ssh_port', 22),
-        username=server['username'],
-        password=server.get('password'),
-        private_key=server.get('private_key'),
-    )
+def get_ssh(server, settings=None):
+    """Build an SSH manager for a server record, jump host resolved from settings.
+
+    `settings` may be passed by callers that already hold a loaded data dict;
+    otherwise the last snapshot installed by load_data() is used.
+    """
+    return SSHManager.for_server(server, settings)
+
+
+# ---- SSH jump host (bastion) -------------------------------------------------
+#
+# DPI on some networks completes the TCP handshake to port 22 and then kills the
+# SSH banner/key exchange, so the panel can reach a server's VPN port while its
+# control SSH times out. Relaying that SSH through a clean host fixes it. The
+# bastion is configured globally in settings.ssh_jump and can be overridden per
+# server via the server record's own 'ssh_jump' block.
+
+SERVER_JUMP_MODES = ('inherit', 'off', 'fallback', 'always')
+
+
+def _apply_jump_credentials(block, incoming, stored):
+    """Fill a jump block's credentials, keeping stored ones when none are sent.
+
+    The browser never receives the bastion password or key back, so a blank
+    field means "keep what is saved". Sending one credential switches to it and
+    clears the other, matching how server credentials are edited.
+    """
+    key = str(incoming.get('private_key') or '').strip()
+    password = incoming.get('password') or ''
+    if key:
+        block['private_key'], block['password'] = key, ''
+    elif password:
+        block['private_key'], block['password'] = '', password
+    else:
+        block['private_key'] = stored.get('private_key', '')
+        block['password'] = stored.get('password', '')
+    return block
+
+
+def _normalize_jump_settings(payload, stored):
+    """Canonical settings.ssh_jump block from a save payload."""
+    incoming = payload.dict() if hasattr(payload, 'dict') else dict(payload or {})
+    stored = stored if isinstance(stored, dict) else {}
+
+    mode = str(incoming.get('mode') or '').strip().lower()
+    if mode not in ('fallback', 'always'):
+        mode = 'fallback'
+    try:
+        port = int(incoming.get('port') or 22)
+    except (TypeError, ValueError):
+        port = 22
+
+    block = {
+        'enabled': bool(incoming.get('enabled')),
+        'mode': mode,
+        'host': str(incoming.get('host') or '').strip(),
+        'port': max(1, min(65535, port)),
+        'username': str(incoming.get('username') or '').strip() or 'root',
+    }
+    return _apply_jump_credentials(block, incoming, stored)
+
+
+def _normalize_server_jump(payload, stored):
+    """Canonical per-server ssh_jump override, or None when there is nothing to store."""
+    if payload is None:
+        return stored if isinstance(stored, dict) else None
+
+    incoming = payload.dict() if hasattr(payload, 'dict') else dict(payload or {})
+    stored = stored if isinstance(stored, dict) else {}
+
+    mode = str(incoming.get('mode') or 'inherit').strip().lower()
+    if mode not in SERVER_JUMP_MODES:
+        mode = 'inherit'
+    host = str(incoming.get('host') or '').strip()
+    try:
+        port = int(incoming.get('port') or 22)
+    except (TypeError, ValueError):
+        port = 22
+
+    block = {
+        'mode': mode,
+        'host': host,
+        'port': max(1, min(65535, port)),
+        'username': str(incoming.get('username') or '').strip(),
+    }
+    if host:
+        _apply_jump_credentials(block, incoming, stored)
+    else:
+        # A per-server bastion without an address is meaningless; the server
+        # falls back to the global one, so drop any credentials left behind.
+        block['password'] = ''
+        block['private_key'] = ''
+
+    if mode == 'inherit' and not host:
+        return None
+    return block
+
+
+def sanitize_settings_for_ui(settings):
+    """Settings with the bastion credentials stripped out.
+
+    The jump host holds shell access to a machine that can reach every managed
+    server, so it gets the same treatment as server credentials: presence flags
+    only, never the secret itself.
+    """
+    safe = dict(settings or {})
+    jump = safe.get('ssh_jump')
+    if isinstance(jump, dict):
+        safe['ssh_jump'] = {
+            **{k: v for k, v in jump.items() if k not in ('password', 'private_key')},
+            'has_password': bool(jump.get('password')),
+            'has_private_key': bool(jump.get('private_key')),
+        }
+    return safe
 
 
 def get_panel_local_url(request: Optional[Request] = None):
@@ -1700,6 +1824,23 @@ class LoginRequest(BaseModel):
     captcha: Optional[str] = None
 
 
+class ServerJumpOverride(BaseModel):
+    """Per-server jump-host override.
+
+    `mode` 'inherit' follows settings.ssh_jump; any other value overrides it for
+    this server alone. Leaving `host` empty keeps the global bastion and only
+    changes whether this server uses it.
+    """
+    mode: str = 'inherit'
+    host: str = ''
+    port: int = 22
+    username: str = ''
+    # None keeps whatever credential is already stored (same convention as the
+    # server credentials below).
+    password: Optional[str] = None
+    private_key: Optional[str] = None
+
+
 class AddServerRequest(BaseModel):
     host: str = ''
     ssh_port: int = 22
@@ -1708,6 +1849,10 @@ class AddServerRequest(BaseModel):
     private_key: str = ''
     name: str = ''
     emoji: str = '🖥'
+    # Optional literal IP the control SSH connects to instead of `host`, so the
+    # panel does not depend on DNS for management traffic.
+    ssh_address: str = ''
+    ssh_jump: Optional[ServerJumpOverride] = None
 
 
 class EditServerRequest(BaseModel):
@@ -1720,6 +1865,8 @@ class EditServerRequest(BaseModel):
     # fields can be omitted to keep current auth unchanged.
     password: Optional[str] = None
     private_key: Optional[str] = None
+    ssh_address: Optional[str] = None
+    ssh_jump: Optional[ServerJumpOverride] = None
 
 
 class ReorderServersRequest(BaseModel):
@@ -1899,6 +2046,22 @@ class AutoBackupSettings(BaseModel):
     interval_hours: int = 24
 
 
+class SSHJumpSettings(BaseModel):
+    """Default bastion the panel relays management SSH through.
+
+    `mode` is 'fallback' (direct first, tunnel when that fails) or 'always'.
+    Credentials are None when the client is leaving them untouched — they are
+    never sent back to the browser, so a blank field means "keep", not "clear".
+    """
+    enabled: bool = False
+    mode: str = 'fallback'
+    host: str = ''
+    port: int = 22
+    username: str = 'root'
+    password: Optional[str] = None
+    private_key: Optional[str] = None
+
+
 
 
 class UpdateUserRequest(BaseModel):
@@ -1913,6 +2076,17 @@ class UpdateUserRequest(BaseModel):
 
 
 
+class TestJumpHostRequest(BaseModel):
+    """Probe a bastion before saving it. Blank credentials reuse the stored ones."""
+    host: str = ''
+    port: int = 22
+    username: str = 'root'
+    password: Optional[str] = None
+    private_key: Optional[str] = None
+    # When given, also check that the bastion can open a tunnel to that server.
+    server_id: Optional[int] = None
+
+
 class SaveSettingsRequest(BaseModel):
     appearance: AppearanceSettings
     sync: SyncSettings
@@ -1920,6 +2094,10 @@ class SaveSettingsRequest(BaseModel):
     telegram: TelegramSettings
     ssl: SSLSettings
     auto_backup: AutoBackupSettings = AutoBackupSettings()
+    # Omitted entirely (an older client, a scripted save) means "leave the jump
+    # host alone" rather than "reset it" - wiping the bastion address would cut
+    # the panel off from every server that only answers through it.
+    ssh_jump: Optional[SSHJumpSettings] = None
 
 
 class ToggleUserRequest(BaseModel):
@@ -2547,7 +2725,21 @@ async def api_add_server(request: Request, req: AddServerRequest):
         if not req.password and not req.private_key:
             return JSONResponse({'error': 'Password or SSH key is required'}, status_code=400)
 
-        ssh = SSHManager(host, req.ssh_port, username, req.password, req.private_key)
+        server = {
+            'name': name, 'host': host, 'ssh_port': req.ssh_port,
+            'username': username, 'password': req.password,
+            'emoji': emoji,
+            'private_key': req.private_key, 'server_info': '',
+            'ssh_address': (req.ssh_address or '').strip(),
+            'protocols': {},
+        }
+        jump_override = _normalize_server_jump(req.ssh_jump, None)
+        if jump_override is not None:
+            server['ssh_jump'] = jump_override
+
+        # Verify over the same route the panel will use from now on, jump host
+        # included, so a server that only answers through the bastion still adds.
+        ssh = SSHManager.for_server(server, load_data().get('settings', {}))
         try:
             ssh.connect()
             server_info = ssh.test_connection()
@@ -2555,13 +2747,7 @@ async def api_add_server(request: Request, req: AddServerRequest):
         except Exception as e:
             return JSONResponse({'error': f'Connection failed: {str(e)}'}, status_code=400)
 
-        server = {
-            'name': name, 'host': host, 'ssh_port': req.ssh_port,
-            'username': username, 'password': req.password,
-            'emoji': emoji,
-            'private_key': req.private_key, 'server_info': server_info,
-            'protocols': {},
-        }
+        server['server_info'] = server_info
         data = load_data()
         data['servers'].append(server)
         save_data(data)
@@ -2602,8 +2788,22 @@ async def api_edit_server(request: Request, server_id: int, req: EditServerReque
         if not new_pass and not new_key:
             return JSONResponse({'error': 'Password or SSH key is required'}, status_code=400)
 
-        # Verify the new connection details before committing the change.
-        ssh = SSHManager(new_host, new_port, new_user, new_pass, new_key)
+        new_address = server.get('ssh_address', '') if req.ssh_address is None else req.ssh_address.strip()
+        new_jump = _normalize_server_jump(req.ssh_jump, server.get('ssh_jump'))
+
+        # Verify the new connection details before committing the change, over
+        # the route (direct or jumped) they describe.
+        candidate = {
+            'host': new_host,
+            'ssh_address': new_address,
+            'ssh_port': new_port,
+            'username': new_user,
+            'password': new_pass,
+            'private_key': new_key,
+        }
+        if new_jump is not None:
+            candidate['ssh_jump'] = new_jump
+        ssh = SSHManager.for_server(candidate, data.get('settings', {}))
         try:
             ssh.connect()
             server_info = ssh.test_connection()
@@ -2617,8 +2817,15 @@ async def api_edit_server(request: Request, server_id: int, req: EditServerReque
         server['username'] = new_user
         server['password'] = new_pass
         server['private_key'] = new_key
+        server['ssh_address'] = new_address
+        if new_jump is None:
+            server.pop('ssh_jump', None)
+        else:
+            server['ssh_jump'] = new_jump
         server['server_info'] = server_info
         save_data(data)
+        # The address or route may have changed; drop what we learned about it.
+        SSHManager.forget_routes()
         return {'status': 'success', 'server_info': server_info}
     except Exception as e:
         logger.exception("Error editing server")
@@ -2637,26 +2844,41 @@ async def api_server_ping(request: Request, server_id: int):
     if server_id >= len(data['servers']):
         return JSONResponse({'error': 'Server not found'}, status_code=404)
     server = data['servers'][server_id]
-    host = server['host']
+    host = server_ssh_host(server)
     port = int(server.get('ssh_port', 22))
+    jump, jump_mode = resolve_jump(server, data.get('settings', {}))
 
     import time as _time
-    t0 = _time.perf_counter()
-    try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port), timeout=2.0
-        )
-        ms = round((_time.perf_counter() - t0) * 1000)
-        writer.close()
+
+    direct_error = None
+    # 'always' means the target is not supposed to answer us directly, so do not
+    # spend the timeout finding that out again.
+    if jump_mode != 'always':
+        t0 = _time.perf_counter()
         try:
-            await writer.wait_closed()
-        except Exception:
-            pass
-        return {'alive': True, 'ms': ms}
-    except asyncio.TimeoutError:
-        return {'alive': False, 'error': 'timeout', 'ms': None}
-    except Exception as e:
-        return {'alive': False, 'error': str(e), 'ms': None}
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port), timeout=2.0
+            )
+            ms = round((_time.perf_counter() - t0) * 1000)
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+            return {'alive': True, 'ms': ms, 'via': 'direct'}
+        except asyncio.TimeoutError:
+            direct_error = 'timeout'
+        except Exception as e:
+            direct_error = str(e)
+
+    if jump:
+        try:
+            ms = await asyncio.to_thread(probe_via_jump, jump, host, port)
+            return {'alive': True, 'ms': ms, 'via': 'jump'}
+        except Exception as e:
+            return {'alive': False, 'error': direct_error or str(e), 'ms': None, 'via': 'jump'}
+
+    return {'alive': False, 'error': direct_error, 'ms': None, 'via': 'direct'}
 
 
 @app.post('/api/servers/reorder', tags=["Servers"])
@@ -4540,7 +4762,7 @@ async def settings_page(request: Request):
     if not user:
         return RedirectResponse('/login')
     data = load_data()
-    return tpl(request, 'settings.html', settings=data.get('settings', {}), servers=sanitize_servers_for_ui(data.get('servers', [])), current_version=CURRENT_VERSION)
+    return tpl(request, 'settings.html', settings=sanitize_settings_for_ui(data.get('settings', {})), servers=sanitize_servers_for_ui(data.get('servers', [])), current_version=CURRENT_VERSION)
 
 
 @app.get('/api/settings', tags=["Settings"])
@@ -4548,7 +4770,7 @@ async def api_get_settings(request: Request):
     if not _check_admin(request):
         return JSONResponse({'error': 'Forbidden'}, status_code=403)
     data = load_data()
-    return data.get('settings', {})
+    return sanitize_settings_for_ui(data.get('settings', {}))
 
 
 @app.get('/api/settings/tunnels/status', tags=["Settings"])
@@ -4681,8 +4903,14 @@ async def save_settings(request: Request, payload: SaveSettingsRequest):
         'last_created_count': old_auto_backup.get('last_created_count', 0),
         'last_error': old_auto_backup.get('last_error')
     }
+
+    if payload.ssh_jump is not None:
+        settings['ssh_jump'] = _normalize_jump_settings(payload.ssh_jump, settings.get('ssh_jump'))
     save_data(data)
-    logger.info("Settings saved (including captcha, telegram and auto backup)")
+    SSHManager.set_default_settings(settings)
+    # Routing hints were learned under the old config; re-probe with the new one.
+    SSHManager.forget_routes()
+    logger.info("Settings saved (including captcha, telegram, auto backup and SSH jump host)")
 
     # Handle bot start/stop based on new telegram settings
     tg_cfg = payload.telegram
@@ -4696,6 +4924,53 @@ async def save_settings(request: Request, payload: SaveSettingsRequest):
             asyncio.create_task(tg_bot.stop_bot())
 
     return {"status": "success", "bot_running": tg_bot.is_running()}
+
+
+@app.post('/api/settings/ssh_jump/test', tags=["Settings"])
+async def api_test_ssh_jump(request: Request, req: TestJumpHostRequest):
+    """Check that the bastion accepts our credentials, and optionally that it
+    can open a tunnel to a chosen server. Lets an admin validate a jump host
+    before saving it and locking themselves out of the direct route."""
+    if not _check_admin(request):
+        return JSONResponse({'error': 'Forbidden'}, status_code=403)
+
+    data = load_data()
+    stored = data.get('settings', {}).get('ssh_jump', {}) or {}
+    jump = normalize_jump_config(_normalize_jump_settings(req, stored))
+    if not jump:
+        return JSONResponse({'error': 'Jump host address is required'}, status_code=400)
+
+    def _login():
+        ssh = SSHManager(jump['host'], jump['port'], jump['username'],
+                         jump['password'], jump['private_key'])
+        ssh.connect()
+        try:
+            return ssh.test_connection()
+        finally:
+            ssh.disconnect()
+
+    try:
+        jump_info = await asyncio.to_thread(_login)
+    except Exception as e:
+        return JSONResponse({'error': f'Jump host connection failed: {e}'}, status_code=400)
+
+    result = {'status': 'success', 'jump_info': jump_info}
+
+    servers = data.get('servers', [])
+    if req.server_id is not None and 0 <= req.server_id < len(servers):
+        server = servers[req.server_id]
+        target_host = server_ssh_host(server)
+        target_port = int(server.get('ssh_port', 22) or 22)
+        target = {'host': target_host, 'port': target_port}
+        try:
+            target['ms'] = await asyncio.to_thread(probe_via_jump, jump, target_host, target_port)
+            target['reachable'] = True
+        except Exception as e:
+            target['reachable'] = False
+            target['error'] = str(e)
+        result['target'] = target
+
+    return result
 
 
 @app.post('/api/settings/telegram/toggle', tags=["Settings"])

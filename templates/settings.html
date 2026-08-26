@@ -240,6 +240,73 @@
                 </div>
             </form>
         </div>
+
+        <!-- BLOCK SSH Jump Host -->
+        <div class="card">
+            <h3 class="card-title" style="margin-bottom: var(--space-lg);">⛓ {{ _('ssh_jump_title') }}</h3>
+            <form id="sshJumpForm">
+                <p class="form-hint" style="margin-bottom: var(--space-md);">{{ _('ssh_jump_hint') }}</p>
+
+                <div class="form-group">
+                    <label class="form-label">
+                        <input type="checkbox" id="ssh_jump_enabled" {% if settings.get('ssh_jump', {}).get('enabled') %}checked{% endif %}>
+                        {{ _('ssh_jump_enable') }}
+                    </label>
+                </div>
+
+                <div id="sshJumpFields" style="{% if not settings.get('ssh_jump', {}).get('enabled') %}display:none;{% endif %} margin-top: var(--space-md);">
+                    <div class="form-group">
+                        <label class="form-label">{{ _('ssh_jump_mode_label') }}</label>
+                        <select class="form-input" id="ssh_jump_mode">
+                            <option value="fallback" {% if settings.get('ssh_jump', {}).get('mode', 'fallback') == 'fallback' %}selected{% endif %}>{{ _('ssh_jump_mode_fallback') }}</option>
+                            <option value="always" {% if settings.get('ssh_jump', {}).get('mode') == 'always' %}selected{% endif %}>{{ _('ssh_jump_mode_always') }}</option>
+                        </select>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 2fr 1fr; gap: var(--space-md);">
+                        <div class="form-group">
+                            <label class="form-label">{{ _('ssh_jump_host_label') }}</label>
+                            <input type="text" class="form-input" id="ssh_jump_host" value="{{ settings.get('ssh_jump', {}).get('host', '') }}" placeholder="167.17.178.172">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">{{ _('ssh_jump_port_label') }}</label>
+                            <input type="number" class="form-input" id="ssh_jump_port" value="{{ settings.get('ssh_jump', {}).get('port', 22) }}" min="1" max="65535">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">{{ _('ssh_jump_user_label') }}</label>
+                        <input type="text" class="form-input" id="ssh_jump_username" value="{{ settings.get('ssh_jump', {}).get('username', 'root') }}" placeholder="root">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">{{ _('ssh_jump_password_label') }}</label>
+                        <input type="password" class="form-input" id="ssh_jump_password" autocomplete="new-password" placeholder="{% if settings.get('ssh_jump', {}).get('has_password') %}{{ _('ssh_jump_credential_stored') }}{% else %}••••••••{% endif %}">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">{{ _('ssh_jump_key_label') }}</label>
+                        <textarea class="form-input" id="ssh_jump_private_key" rows="4" placeholder="{% if settings.get('ssh_jump', {}).get('has_private_key') %}{{ _('ssh_jump_credential_stored') }}{% else %}{{ _('ssh_key_placeholder') }}{% endif %}"></textarea>
+                        <p class="form-hint">{{ _('edit_keep_credential') }}</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">{{ _('ssh_jump_target_label') }}</label>
+                        <select class="form-input" id="ssh_jump_target">
+                            <option value="">{{ _('ssh_jump_target_none') }}</option>
+                            {% for server in servers %}
+                            <option value="{{ loop.index0 }}">{{ server.emoji }} {{ server.name }} ({{ server.host }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <button type="button" class="btn btn-secondary" id="jumpTestBtn" onclick="testJumpHost()">
+                        <span id="jumpTestBtnText">🔌 {{ _('ssh_jump_test_btn') }}</span>
+                        <div class="spinner hidden" id="jumpTestSpinner"></div>
+                    </button>
+                </div>
+            </form>
+        </div>
     </div>
 
     <!-- RIGHT COLUMN -->
@@ -559,6 +626,71 @@
         document.getElementById('sslFields').style.display = e.target.checked ? 'block' : 'none';
     });
 
+    document.getElementById('ssh_jump_enabled').addEventListener('change', (e) => {
+        document.getElementById('sshJumpFields').style.display = e.target.checked ? 'block' : 'none';
+    });
+
+    // Blank credential fields mean "keep what is stored" - the browser never
+    // receives the bastion password or key back, so it cannot echo them.
+    function collectJumpSettings() {
+        return {
+            enabled: document.getElementById('ssh_jump_enabled').checked,
+            mode: document.getElementById('ssh_jump_mode').value,
+            host: document.getElementById('ssh_jump_host').value.trim(),
+            port: parseInt(document.getElementById('ssh_jump_port').value || '22'),
+            username: document.getElementById('ssh_jump_username').value.trim(),
+            password: document.getElementById('ssh_jump_password').value || null,
+            private_key: document.getElementById('ssh_jump_private_key').value || null
+        };
+    }
+
+    async function testJumpHost() {
+        const btn = document.getElementById('jumpTestBtn');
+        const text = document.getElementById('jumpTestBtnText');
+        const spinner = document.getElementById('jumpTestSpinner');
+        const targetRaw = document.getElementById('ssh_jump_target').value;
+        const jump = collectJumpSettings();
+
+        if (!jump.host) {
+            showToast(_('ssh_jump_host_required'), 'error');
+            return;
+        }
+
+        btn.disabled = true;
+        text.classList.add('hidden');
+        spinner.classList.remove('hidden');
+        try {
+            const res = await fetch('/api/settings/ssh_jump/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    host: jump.host,
+                    port: jump.port,
+                    username: jump.username,
+                    password: jump.password,
+                    private_key: jump.private_key,
+                    server_id: targetRaw === '' ? null : parseInt(targetRaw)
+                })
+            });
+            const json = await res.json();
+            if (!res.ok) throw new Error(json.error || _('error'));
+
+            if (json.target && json.target.reachable === false) {
+                showToast(`${_('ssh_jump_test_target_fail')}: ${json.target.error || ''}`, 'error');
+            } else if (json.target) {
+                showToast(`${_('ssh_jump_test_target_ok')} (${json.target.ms} ms)`, 'success');
+            } else {
+                showToast(_('ssh_jump_test_ok'), 'success');
+            }
+        } catch (err) {
+            showToast(err.message, 'error');
+        } finally {
+            btn.disabled = false;
+            text.classList.remove('hidden');
+            spinner.classList.add('hidden');
+        }
+    }
+
     let tunnelStatusTimer = null;
 
     function copyElementText(id) {
@@ -857,11 +989,13 @@
             interval_hours: parseInt(autoBackupForm.interval_hours.value || '24')
         };
 
+        const ssh_jump = collectJumpSettings();
+
         try {
             const res = await fetch('/api/settings/save', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ appearance, sync, captcha, telegram, ssl, auto_backup })
+                body: JSON.stringify({ appearance, sync, captcha, telegram, ssl, auto_backup, ssh_jump })
             });
             if (!res.ok) throw new Error(_('error'));
             showToast(_('settings_saved'), 'success');

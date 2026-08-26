@@ -238,7 +238,7 @@ class AdguardManager:
                 f"docker network connect {self.NETWORK_NAME} {c} 2>/dev/null || true"
             )
 
-        url_host = self.ssh.host if expose_web else target_ip
+        url_host = self.ssh.public_host if expose_web else target_ip
         admin_url = f"http://{url_host}:{web_port}"
         return {
             'status': 'success',
