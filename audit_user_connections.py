@@ -18,8 +18,8 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
-from ssh_manager import SSHManager
-from awg_manager import AWGManager
+from managers.ssh_manager import SSHManager
+from managers.awg_manager import AWGManager
 
 
 SUPPORTED_PROTOCOLS = {"awg", "awg2", "awg_legacy"}

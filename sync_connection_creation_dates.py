@@ -32,9 +32,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from ssh_manager import SSHManager
-from awg_manager import AWGManager
-from xray_manager import XrayManager
+from managers.ssh_manager import SSHManager
+from managers.awg_manager import AWGManager
+from managers.xray_manager import XrayManager
 
 SUPPORTED_PROTOCOLS = {"awg", "awg2", "awg_legacy", "xray"}
 
