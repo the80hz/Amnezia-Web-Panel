@@ -1406,7 +1406,11 @@ def _manager_call(manager, method, protocol, *args, **kwargs):
 
 
 def generate_vpn_link(config_text):
-    b64 = base64.b64encode(config_text.strip().encode('utf-8')).decode('utf-8')
+    # Amnezia clients decode vpn:// with QByteArray::fromBase64(Base64UrlEncoding |
+    # OmitTrailingEquals) and silently drop '+' and '/', so a standard-alphabet
+    # payload gets corrupted whenever those characters appear (error 900 on
+    # import). Emit the URL-safe alphabet without padding, like the client itself.
+    b64 = base64.urlsafe_b64encode(config_text.strip().encode('utf-8')).decode('utf-8').rstrip('=')
     return f"vpn://{b64}"
 
 
