@@ -50,6 +50,7 @@ from managers.awg_manager import AWGManager
 from managers.xray_manager import XrayManager
 from managers.wireguard_manager import WireGuardManager
 from managers.backup_manager import BackupManager
+from managers.openflux_manager import OPENFLUX_MAX_PER_USER
 import telegram_bot as tg_bot
 
 # Configure logging
@@ -167,12 +168,37 @@ load_translations()
 DATA_LOCK = asyncio.Lock()
 
 
+try:
+    import fcntl as _fcntl
+except Exception:
+    _fcntl = None
+import contextlib as _contextlib
+
+@_contextlib.contextmanager
+def _data_flock(exclusive=True):
+    """Cross-process advisory lock so the panel and openflux_healthcheck.py do
+    not clobber each other's data.json writes."""
+    if _fcntl is None:
+        yield
+        return
+    lk = open(DATA_FILE + '.lock', 'a+')
+    try:
+        _fcntl.flock(lk, _fcntl.LOCK_EX if exclusive else _fcntl.LOCK_SH)
+        yield
+    finally:
+        try:
+            _fcntl.flock(lk, _fcntl.LOCK_UN)
+        finally:
+            lk.close()
+
+
 def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    else:
-        data = {}
+    with _data_flock(exclusive=False):
+        if os.path.exists(DATA_FILE):
+            with open(DATA_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        else:
+            data = {}
     data.setdefault('servers', [])
     data.setdefault('users', [])
     data.setdefault('user_connections', [])
@@ -447,8 +473,11 @@ def _build_cached_clients_for_server_protocol(data: dict, latest_state: dict, se
 
 
 def save_data(data):
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    with _data_flock(exclusive=True):
+        tmp = DATA_FILE + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, DATA_FILE)
 
 
 async def save_data_async(data):
@@ -1225,7 +1254,7 @@ async def wait_for_tunnel_url(provider: str, seconds: int = 20):
     return get_tunnel_status(provider)
 
 
-BASE_PROTOCOLS = ['awg', 'awg2', 'awg3', 'awg_legacy', 'xray', 'telemt', 'dns', 'wireguard', 'socks5', 'adguard', 'nginx']
+BASE_PROTOCOLS = ['awg', 'awg2', 'awg3', 'awg_legacy', 'xray', 'telemt', 'dns', 'wireguard', 'socks5', 'adguard', 'nginx', 'openflux']
 MULTI_INSTANCE_PROTOCOLS = {'awg', 'awg2', 'awg3', 'awg_legacy', 'xray', 'telemt', 'socks5'}
 
 
@@ -1272,6 +1301,7 @@ def protocol_display_name(protocol: str) -> str:
         'socks5': 'SOCKS5',
         'adguard': 'AdGuard Home',
         'nginx': 'NGINX',
+        'openflux': 'OpenFlux',
     }
     name = names.get(base, base)
     return name if idx <= 1 else f'{name} #{idx}'
@@ -1348,6 +1378,9 @@ def get_protocol_manager(ssh, protocol: str):
     elif base == 'nginx':
         from managers.nginx_manager import NginxManager
         return NginxManager(ssh, protocol)
+    elif base == 'openflux':
+        from managers.openflux_manager import OpenFluxManager
+        return OpenFluxManager(ssh, protocol)
     from managers.awg_manager import AWGManager
     return AWGManager(ssh)
 
@@ -1601,8 +1634,11 @@ async def perform_mass_operations(delete_uids: List[str] = None, toggle_uids: Li
             
             # 2. Toggles
             for c, enabled in ops['toggle']:
-                manager = get_protocol_manager(ssh, c['protocol'])
-                await asyncio.to_thread(_manager_call, manager, 'toggle_client', c['protocol'], c['client_id'], enabled)
+                try:
+                    manager = get_protocol_manager(ssh, c['protocol'])
+                    await asyncio.to_thread(_manager_call, manager, 'toggle_client', c['protocol'], c['client_id'], enabled)
+                except Exception as e:
+                    logger.warning(f"toggle_client failed for {c.get('client_id')} ({c.get('protocol')}): {e}")
                 # Incremental toggle in data
                 async with DATA_LOCK:
                     current_data = load_data()
@@ -1922,6 +1958,8 @@ class AddConnectionRequest(BaseModel):
     protocol: str = 'awg'
     name: str = 'Connection'
     user_id: Optional[str] = None
+    doc_url: Optional[str] = None
+    transport: Optional[str] = None
     telemt_quota: Optional[str] = None
     telemt_max_ips: Optional[int] = None
     telemt_expiry: Optional[str] = None
@@ -1971,6 +2009,8 @@ class MyAddConnectionRequest(BaseModel):
     server_id: int
     protocol: str = 'awg'
     name: str = 'VPN Connection'
+    doc_url: Optional[str] = None
+    transport: Optional[str] = None
 
 
 class AddUserRequest(BaseModel):
@@ -3309,6 +3349,12 @@ async def api_install_protocol(request: Request, server_id: int, req: InstallPro
             ssh.disconnect()
             return JSONResponse({'error': result.get('message') or result.get('error') or 'Installation failed'}, status_code=400)
 
+        if result.get('status') == 'building':
+            # Async build (OpenFlux): image not present yet, so don't record it as
+            # installed — the status poll flips it to installed when the image lands.
+            ssh.disconnect()
+            return result
+
         proto_record = {
             'installed': True,
             'port': req.port,
@@ -3811,6 +3857,16 @@ async def api_add_connection(request: Request, server_id: int, req: AddConnectio
         server = data['servers'][server_id]
         proto_info = server.get('protocols', {}).get(req.protocol, {})
         port = proto_info.get('port', '55424')
+        if protocol_base(req.protocol) == 'openflux':
+            _doc = (req.doc_url or '').strip()
+            if req.user_id:
+                _ofc = sum(1 for c in data.get('user_connections', [])
+                           if protocol_base(c.get('protocol', '')) == 'openflux' and c.get('user_id') == req.user_id)
+                if _ofc >= OPENFLUX_MAX_PER_USER:
+                    return JSONResponse({'error': f'Лимит OpenFlux-подключений: {OPENFLUX_MAX_PER_USER}.'}, status_code=400)
+            if _doc and any(protocol_base(c.get('protocol', '')) == 'openflux' and c.get('doc_url') == _doc
+                            for c in data.get('user_connections', [])):
+                return JSONResponse({'error': 'Этот документ уже используется другим подключением.'}, status_code=400)
         ssh = get_ssh(server)
         ssh.connect()
         manager = get_protocol_manager(ssh, req.protocol)
@@ -3827,6 +3883,9 @@ async def api_add_connection(request: Request, server_id: int, req: AddConnectio
             )
         elif protocol_base(req.protocol) == 'wireguard':
             result = manager.add_client(req.name, server['host'])
+        elif protocol_base(req.protocol) == 'openflux':
+            result = manager.add_client(req.protocol, req.name, server['host'], port,
+                                        doc_url=req.doc_url, transport=req.transport)
         else:
             result = manager.add_client(req.protocol, req.name, server['host'], port)
         ssh.disconnect()
@@ -3843,6 +3902,8 @@ async def api_add_connection(request: Request, server_id: int, req: AddConnectio
                 'protocol': req.protocol,
                 'client_id': result['client_id'],
                 'name': req.name,
+                'doc_url': result.get('doc_url'),
+                'transport': result.get('transport'),
                 'created_at': datetime.now().isoformat(),
             }
             data['user_connections'].append(conn)
@@ -3994,6 +4055,11 @@ async def api_get_connection_config(request: Request, server_id: int, req: Conne
         server = data['servers'][server_id]
         if not req.client_id:
             return JSONResponse({'error': 'Client ID is required'}, status_code=400)
+        if protocol_base(req.protocol) == 'openflux':
+            oconn = next((c for c in data.get('user_connections', [])
+                          if c.get('client_id') == req.client_id and c.get('server_id') == server_id), None)
+            from managers.openflux_manager import OpenFluxManager
+            return {'config': OpenFluxManager.build_instructions((oconn or {}).get('doc_url', ''), (oconn or {}).get('transport', 'vyandex')), 'vpn_link': ''}
         proto_info = server.get('protocols', {}).get(req.protocol, {})
         port = proto_info.get('port', '55424')
         config = ''
@@ -4448,13 +4514,23 @@ async def api_my_add_connection(request: Request, req: MyAddConnectionRequest):
             lang = request.cookies.get('lang', 'ru')
             return JSONResponse({'error': _t('server_paused_error', lang)}, status_code=503)
         protocol = (req.protocol or 'awg').strip()
-        supported_protocols = {'awg', 'awg2', 'awg3', 'awg_legacy', 'xray', 'telemt'}
+        supported_protocols = {'awg', 'awg2', 'awg3', 'awg_legacy', 'xray', 'telemt', 'openflux'}
         if protocol not in supported_protocols:
             return JSONResponse({'error': f'Unsupported protocol: {protocol}'}, status_code=400)
 
         proto_info = server.get('protocols', {}).get(protocol, {})
-        if not proto_info.get('installed'):
+        # OpenFlux install (image build) is async, so its 'installed' flag lags;
+        # add_client checks image presence itself, so skip the gate for it.
+        if protocol != 'openflux' and not proto_info.get('installed'):
             return JSONResponse({'error': f'Protocol {protocol} is not installed on selected server'}, status_code=400)
+        if protocol == 'openflux':
+            of_count = sum(1 for c in data.get('user_connections', [])
+                           if protocol_base(c.get('protocol', '')) == 'openflux' and c.get('user_id') == user['id'])
+            if of_count >= OPENFLUX_MAX_PER_USER:
+                return JSONResponse({'error': f'Лимит OpenFlux-подключений: {OPENFLUX_MAX_PER_USER}. Удалите старое.'}, status_code=400)
+            if req.doc_url and any(protocol_base(c.get('protocol', '')) == 'openflux' and c.get('doc_url') == req.doc_url
+                                   for c in data.get('user_connections', [])):
+                return JSONResponse({'error': 'Этот документ уже используется другим подключением.'}, status_code=400)
 
         port_default = '443' if protocol == 'telemt' else '55424'
         port = proto_info.get('port', port_default)
@@ -4463,11 +4539,15 @@ async def api_my_add_connection(request: Request, req: MyAddConnectionRequest):
         ssh = get_ssh(server)
         ssh.connect()
         manager = get_protocol_manager(ssh, protocol)
-        result = manager.add_client(protocol, conn_name, server['host'], port)
+        if protocol == 'openflux':
+            result = manager.add_client(protocol, conn_name, server['host'], port,
+                                        doc_url=req.doc_url, transport=req.transport)
+        else:
+            result = manager.add_client(protocol, conn_name, server['host'], port)
         ssh.disconnect()
 
         if not result.get('client_id'):
-            return JSONResponse({'error': 'Failed to create connection on server'}, status_code=500)
+            return JSONResponse({'error': result.get('message') or 'Failed to create connection on server'}, status_code=500)
 
         new_conn = {
             'id': str(uuid.uuid4()),
@@ -4476,6 +4556,8 @@ async def api_my_add_connection(request: Request, req: MyAddConnectionRequest):
             'protocol': protocol,
             'client_id': result['client_id'],
             'name': conn_name,
+            'doc_url': result.get('doc_url'),
+            'transport': result.get('transport'),
             'created_at': datetime.now().isoformat(),
         }
         data['user_connections'].append(new_conn)
@@ -4483,7 +4565,7 @@ async def api_my_add_connection(request: Request, req: MyAddConnectionRequest):
 
         config = result.get('config', '')
         vpn_link = result.get('vpn_link') or (generate_vpn_link(config) if config else '')
-        return {'status': 'success', 'connection': new_conn, 'config': config, 'vpn_link': vpn_link}
+        return {'status': 'success', 'connection': new_conn, 'config': config, 'vpn_link': vpn_link, 'instructions': result.get('instructions', '')}
     except Exception as e:
         logger.exception("Error creating my connection")
         return JSONResponse({'error': str(e)}, status_code=500)
@@ -4586,6 +4668,9 @@ async def api_share_config(token: str, connection_id: str, request: Request):
         server = data['servers'][sid]
         proto_info = server.get('protocols', {}).get(conn['protocol'], {})
         port = proto_info.get('port', '55424')
+        if protocol_base(conn['protocol']) == 'openflux':
+            from managers.openflux_manager import OpenFluxManager
+            return {'config': OpenFluxManager.build_instructions(conn.get('doc_url', ''), conn.get('transport', 'vyandex')), 'vpn_link': ''}
         config = conn.get('imported_config', '')
         if not config:
             if server.get('paused'):
@@ -4623,6 +4708,9 @@ async def api_my_connection_config(request: Request, connection_id: str):
         server = data['servers'][sid]
         proto_info = server.get('protocols', {}).get(conn['protocol'], {})
         port = proto_info.get('port', '55424')
+        if protocol_base(conn['protocol']) == 'openflux':
+            from managers.openflux_manager import OpenFluxManager
+            return {'config': OpenFluxManager.build_instructions(conn.get('doc_url', ''), conn.get('transport', 'vyandex')), 'vpn_link': ''}
         config = conn.get('imported_config', '')
         if not config:
             if server.get('paused'):

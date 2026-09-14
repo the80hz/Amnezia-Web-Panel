@@ -477,5 +477,10 @@
   "server_via_jump": "via jump host",
   "ssh_jump_test_forwarding_ok": "Login and tunnel both work",
   "ssh_jump_test_prohibited": "Login works, but the jump host refuses to forward. Check AllowTcpForwarding (and PermitOpen) in its sshd config.",
-  "ssh_jump_test_forward_failed": "Login works, but the tunnel could not be opened"
+  "ssh_jump_test_forward_failed": "Login works, but the tunnel could not be opened",
+  "openflux_desc": "Emergency channel that tunnels through Yandex Docs — works even under an IP whitelist. Users connect with the OpenFlux app and their own public Yandex document.",
+  "openflux_ready": "Ready",
+  "openflux_active": "Active tunnels",
+  "openflux_building": "Building image…",
+  "openflux_build_failed": "Build failed"
 }

@@ -18,6 +18,8 @@ from typing import Optional, Callable, Tuple
 
 import httpx
 
+from managers.openflux_manager import OPENFLUX_MAX_PER_USER
+
 logger = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------- #
@@ -29,7 +31,7 @@ _pending_inputs = {}
 _pending_profile_create: dict = {}
 _pending_web_access: dict = {}
 
-CLIENT_PROTOCOLS = {"awg", "awg2", "awg3", "awg_legacy", "xray", "telemt", "wireguard"}
+CLIENT_PROTOCOLS = {"awg", "awg2", "awg3", "awg_legacy", "xray", "telemt", "wireguard", "openflux"}
 SERVICE_PROTOCOLS = {"dns", "adguard", "socks5", "nginx"}
 
 
@@ -153,6 +155,7 @@ def _protocol_display_name(protocol: str) -> str:
         "socks5": "SOCKS5",
         "adguard": "AdGuard Home",
         "nginx": "NGINX",
+        "openflux": "OpenFlux",
     }
     name = names.get(base, base)
     if "__" in str(protocol):
@@ -568,11 +571,14 @@ def _protocols_keyboard(server_id: int, server: dict) -> dict:
 def _protocol_keyboard(server_id: int, proto: str, proto_info: dict) -> dict:
     base = _proto_base(proto)
     rows = []
-    if base in CLIENT_PROTOCOLS:
+    if base in CLIENT_PROTOCOLS and base != "openflux":
         rows.append([{"text": "👥 Connections", "callback_data": _ref("clients", {"sid": server_id, "proto": proto})}])
         rows.append([{"text": "➕ Create connection", "callback_data": _ref("add_client", {"sid": server_id, "proto": proto})}])
     is_running = proto_info.get("container_running") is True
-    rows.append([{"text": "⏹ Stop" if is_running else "▶️ Start", "callback_data": _ref("toggle_proto", {"sid": server_id, "proto": proto, "start": not is_running})}])
+    # OpenFlux uses per-user containers (not one service container), so admin
+    # create (no doc-URL prompt) and protocol-level start/stop do not apply.
+    if base != "openflux":
+        rows.append([{"text": "⏹ Stop" if is_running else "▶️ Start", "callback_data": _ref("toggle_proto", {"sid": server_id, "proto": proto, "start": not is_running})}])
     rows.append([{"text": "⬅️ Protocols", "callback_data": f"srv:{server_id}"}])
     return {"inline_keyboard": rows}
 
@@ -604,6 +610,7 @@ def _get_ssh_and_manager(server: dict, proto: str):
     from managers.socks5_manager import Socks5Manager
     from managers.adguard_manager import AdguardManager
     from managers.nginx_manager import NginxManager
+    from managers.openflux_manager import OpenFluxManager
 
     # for_server() applies the panel's jump-host settings, which app.py keeps
     # installed on SSHManager on every load_data().
@@ -623,6 +630,8 @@ def _get_ssh_and_manager(server: dict, proto: str):
         manager = AdguardManager(ssh)
     elif base == "nginx":
         manager = NginxManager(ssh, proto)
+    elif base == "openflux":
+        manager = OpenFluxManager(ssh, proto)
     else:
         manager = AWGManager(ssh)
     return ssh, manager
@@ -729,6 +738,7 @@ def _create_connection_for_user(
     load_data_fn: Callable,
     save_data_fn: Callable,
     generate_vpn_link_fn: Callable,
+    doc_url: Optional[str] = None,
 ):
     data = load_data_fn()
     my_conns = [c for c in data.get("user_connections", []) if c.get("user_id") == panel_user["id"]]
@@ -746,8 +756,27 @@ def _create_connection_for_user(
     if server.get("paused"):
         raise RuntimeError("Сервер временно не работает (на паузе)")
     proto_info = server.get("protocols", {}).get(protocol, {})
-    if not proto_info.get("installed"):
+    # OpenFlux image build is async, so its 'installed' flag lags; add_client
+    # verifies the image itself, so skip the gate for it.
+    if _proto_base(protocol) != "openflux" and not proto_info.get("installed"):
         raise RuntimeError(f"Protocol {protocol} is not installed on selected server")
+
+    # OpenFlux limits: per-user cap + one-doc-one-tunnel (across ALL servers).
+    if _proto_base(protocol) == "openflux":
+        of_conns = [c for c in data.get("user_connections", [])
+                    if _proto_base(c.get("protocol", "")) == "openflux" and c.get("user_id") == panel_user["id"]]
+        if len(of_conns) >= OPENFLUX_MAX_PER_USER:
+            raise RuntimeError(
+                f"Лимит OpenFlux-подключений: {OPENFLUX_MAX_PER_USER}. "
+                "Удалите старое подключение, чтобы создать новое."
+            )
+        if doc_url and any(_proto_base(c.get("protocol", "")) == "openflux" and c.get("doc_url") == doc_url
+                           for c in data.get("user_connections", [])):
+            raise RuntimeError(
+                "Этот документ уже используется другим подключением. "
+                "На один документ — только одно активное подключение. "
+                "Создайте новый Яндекс.Документ для второго туннеля."
+            )
 
     port_default = "443" if _proto_base(protocol) == "telemt" else "55424"
     port = proto_info.get("port", port_default)
@@ -758,6 +787,9 @@ def _create_connection_for_user(
     try:
         if _proto_base(protocol) == "wireguard":
             result = manager.add_client(conn_name, server["host"])
+        elif _proto_base(protocol) == "openflux":
+            result = manager.add_client(protocol, conn_name, server["host"], port,
+                                        doc_url=doc_url, transport="vyandex")
         else:
             result = manager.add_client(protocol, conn_name, server["host"], port)
     finally:
@@ -765,7 +797,7 @@ def _create_connection_for_user(
 
     client_id = result.get("client_id") or result.get("clientId")
     if not client_id:
-        raise RuntimeError("Failed to create connection on server")
+        raise RuntimeError(result.get("message") or "Failed to create connection on server")
 
     new_conn = {
         "id": str(uuid.uuid4()),
@@ -774,6 +806,8 @@ def _create_connection_for_user(
         "protocol": protocol,
         "client_id": client_id,
         "name": conn_name,
+        "doc_url": result.get("doc_url"),
+        "transport": result.get("transport"),
         "created_at": datetime.now().isoformat(),
     }
     data.setdefault("user_connections", []).append(new_conn)
@@ -1102,14 +1136,24 @@ async def _handle_new_protocol(
             "chat_id": chat_id,
             "message_id": message_id,
         }
-        await api.edit_message(
-            chat_id,
-            message_id,
-            "<b>Создание профиля</b>\n"
-            f"Протокол: <b>{_e(_protocol_display_name(protocol))}</b>\n"
-            "Отправьте название профиля одним сообщением.\n"
-            "Для отмены отправьте: <code>/cancel</code>",
-        )
+        if _proto_base(protocol) == "openflux":
+            prompt = (
+                "<b>OpenFlux — аварийный канал</b>\n"
+                "⚠️ Медленно и только для критичного (Telegram, WhatsApp, мессенджеры). "
+                "Один документ = одно подключение.\n\n"
+                "1. Создайте <b>публичный Яндекс.Документ</b> с доступом "
+                "<b>«все по ссылке → редактирование»</b>.\n"
+                "2. Пришлите сюда ссылку на документ одним сообщением.\n\n"
+                "Для отмены: <code>/cancel</code>"
+            )
+        else:
+            prompt = (
+                "<b>Создание профиля</b>\n"
+                f"Протокол: <b>{_e(_protocol_display_name(protocol))}</b>\n"
+                "Отправьте название профиля одним сообщением.\n"
+                "Для отмены отправьте: <code>/cancel</code>"
+            )
+        await api.edit_message(chat_id, message_id, prompt)
     except Exception as e:
         logger.exception("Bot: error creating profile")
         await api.edit_message(chat_id, message_id, f"❌ Error: {_e(e)}")
@@ -1135,10 +1179,16 @@ async def _handle_profile_name_input(
         await api.send_message(chat_id, "❌ Saving is not available for this bot instance.")
         return
 
-    requested_name = (msg.get("text") or "").strip()
-    if not requested_name:
-        await api.send_message(chat_id, "Введите непустое название профиля.")
+    is_openflux = _proto_base(state.get("protocol", "")) == "openflux"
+    user_text = (msg.get("text") or "").strip()
+    if not user_text:
+        await api.send_message(chat_id, "Пришлите ссылку на документ." if is_openflux else "Введите непустое название профиля.")
         return
+
+    if is_openflux:
+        conn_name, doc_url = "OpenFlux", user_text
+    else:
+        conn_name, doc_url = user_text, None
 
     try:
         conn, config, vpn_link = await asyncio.to_thread(
@@ -1146,12 +1196,18 @@ async def _handle_profile_name_input(
             panel_user,
             state["server_id"],
             state["protocol"],
-            requested_name,
+            conn_name,
             load_data_fn,
             save_data_fn,
             generate_vpn_link_fn,
+            doc_url,
         )
-        await _send_profile_document(api, chat_id, conn.get("name", "Connection"), vpn_link, config)
+        if is_openflux:
+            from managers.openflux_manager import OpenFluxManager
+            instructions = OpenFluxManager.build_instructions(conn.get("doc_url") or doc_url, "vyandex")
+            await api.send_message(chat_id, f"✅ Готово!\n\n{_e(instructions)}")
+        else:
+            await _send_profile_document(api, chat_id, conn.get("name", "Connection"), vpn_link, config)
         await _handle_refresh(
             api,
             state.get("chat_id", chat_id),
@@ -1166,6 +1222,43 @@ async def _handle_profile_name_input(
         await api.send_message(chat_id, f"❌ Error: {_e(e)}")
     finally:
         _pending_profile_create.pop(tg_id, None)
+
+
+async def _handle_status_command(api: TelegramAPI, msg: dict, load_data_fn: Callable):
+    chat_id = msg["chat"]["id"]
+    tg_id = str(msg.get("from", {}).get("id", ""))
+    panel_user = _find_user(load_data_fn, tg_id)
+    if not panel_user:
+        await api.send_message(chat_id, "❌ Access denied.")
+        return
+    data = load_data_fn()
+    conns = [c for c in data.get("user_connections", [])
+             if c.get("user_id") == panel_user["id"] and _proto_base(c.get("protocol", "")) == "openflux"]
+    if not conns:
+        await api.send_message(chat_id, "У вас нет OpenFlux-туннелей.")
+        return
+    lines = ["<b>Ваши OpenFlux-туннели</b>"]
+    servers = data.get("servers", [])
+
+    def _check(server, client_id):
+        ssh, manager = _get_ssh_and_manager(server, "openflux")
+        ssh.connect()
+        try:
+            return manager.connection_status(client_id)
+        finally:
+            ssh.disconnect()
+
+    for c in conns:
+        sid = c.get("server_id", -1)
+        status = "⚠️ не удалось проверить"
+        if isinstance(sid, int) and 0 <= sid < len(servers):
+            try:
+                st = await asyncio.to_thread(_check, servers[sid], c.get("client_id", ""))
+                status = "🟢 работает" if st.get("running") else "🔴 не работает (проверьте, что документ ещё публичный)"
+            except Exception:
+                status = "⚠️ не удалось проверить"
+        lines.append(f"• {status}\n  <code>{_e(c.get('doc_url', '—'))}</code>")
+    await api.send_message(chat_id, "\n".join(lines))
 
 
 async def _handle_delete_start(api: TelegramAPI, chat_id: int, message_id: int, callback_id: str, tg_id: str, load_data_fn: Callable):
@@ -1587,6 +1680,10 @@ async def _admin_create_client(api: TelegramAPI, chat_id: int, message_id: int, 
 
     try:
         server, result, client_id, assigned_user = await asyncio.to_thread(_create)
+        if isinstance(result, dict) and (result.get("status") == "error" or not client_id):
+            emsg = result.get("message") or "Failed to create connection"
+            await api.edit_message(chat_id, message_id, f"❌ {_e(emsg)}", reply_markup={"inline_keyboard": [[{"text": "⬅️ Protocol", "callback_data": _ref("proto", {"sid": server_id, "proto": proto})}]]})
+            return
         assigned_text = f"\nAssigned to: <b>{_e(assigned_user.get('username'))}</b>" if assigned_user else "\nAssigned: <b>not linked</b>"
         await api.edit_message(chat_id, message_id, f"✅ Connection created: <b>{_e(name)}</b>{assigned_text}")
         config = result.get("config")
@@ -1781,6 +1878,8 @@ async def _dispatch(api: TelegramAPI, update: dict, load_data_fn: Callable, gene
                 await api.send_message(chat_id, "❌ Access denied.")
             else:
                 await _send_user_connections(api, chat_id, panel_user, load_data_fn)
+        elif text.startswith("/status"):
+            await _handle_status_command(api, msg, load_data_fn)
         elif text.startswith("/servers"):
             if _require_admin(load_data_fn, str(msg["from"]["id"])):
                 await _admin_servers(api, msg["chat"]["id"], None, load_data_fn)

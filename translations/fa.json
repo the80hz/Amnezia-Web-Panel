@@ -444,5 +444,10 @@
   "server_via_jump": "از طریق واسط",
   "ssh_jump_test_forwarding_ok": "ورود و تونل هر دو کار می‌کنند",
   "ssh_jump_test_prohibited": "ورود انجام شد، اما میزبان واسط اجازهٔ تونل نمی‌دهد. AllowTcpForwarding (و PermitOpen) را در sshd آن بررسی کنید.",
-  "ssh_jump_test_forward_failed": "ورود انجام شد، اما تونل باز نشد"
+  "ssh_jump_test_forward_failed": "ورود انجام شد، اما تونل باز نشد",
+  "openflux_desc": "Emergency channel that tunnels through Yandex Docs — works even under an IP whitelist. Users connect with the OpenFlux app and their own public Yandex document.",
+  "openflux_ready": "Ready",
+  "openflux_active": "Active tunnels",
+  "openflux_building": "Building image…",
+  "openflux_build_failed": "Build failed"
 }

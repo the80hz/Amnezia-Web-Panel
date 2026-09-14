@@ -424,6 +424,29 @@
     </div>
 
 
+    <!-- OpenFlux Card -->
+    <div class="card card-hover protocol-card protocol-openflux" id="proto-openflux">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-sm);">
+            <div class="protocol-icon">🆘</div>
+            <div class="flex gap-sm" id="openflux-ctrl" style="display:none!important;"></div>
+        </div>
+        <div class="protocol-name">OpenFlux</div>
+        <div class="protocol-desc">
+            {{ _('openflux_desc') }}
+        </div>
+        <div class="protocol-status" id="openflux-status">
+            <span class="badge badge-warn"><span class="badge-dot"></span> {{ _('not_checked') }}</span>
+        </div>
+        <div id="openflux-info" class="hidden">
+            <div class="protocol-info" id="openflux-info-grid"></div>
+        </div>
+        <div class="flex gap-sm" id="openflux-actions">
+            <button class="btn btn-primary btn-sm" onclick="openInstallModal('openflux')" id="openflux-install-btn" style="flex:1">
+                {{ _('install') }}
+            </button>
+        </div>
+    </div>
+
     <!-- NGINX Card -->
     <div class="card card-hover protocol-card protocol-nginx" id="proto-nginx">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-sm);">
@@ -918,6 +941,7 @@
         { proto: 'dns', category: 'services', icon: '🔍', title: 'AmneziaDNS', descKey: 'dns_desc' },
         { proto: 'adguard', category: 'services', icon: '🛡️', title: 'AdGuard Home', descKey: 'adguard_desc' },
         { proto: 'socks5', category: 'services', icon: '🧦', title: 'SOCKS5 Proxy', descKey: 'socks5_desc' },
+        { proto: 'openflux', category: 'services', icon: '🆘', title: 'OpenFlux', descKey: 'openflux_desc' },
         { proto: 'nginx', category: 'web_servers', icon: '🌐', title: 'NGINX', descKey: 'nginx_desc' },
     ];
     const MARKETPLACE_CATEGORIES = [
@@ -1419,6 +1443,51 @@
         insertAfter.insertAdjacentElement('afterend', clone);
     }
 
+    function renderOpenfluxCard(proto, info) {
+        const protoKey = protoDomKey(proto);
+        const statusEl = document.getElementById(`${protoKey}-status`);
+        const infoEl = document.getElementById(`${protoKey}-info`);
+        const infoGrid = document.getElementById(`${protoKey}-info-grid`);
+        const actionsEl = document.getElementById(`${protoKey}-actions`);
+        const ctrlEl = document.getElementById(`${protoKey}-ctrl`);
+        if (!statusEl || !actionsEl) return;
+        if (ctrlEl) { ctrlEl.style.cssText = 'display:none!important;'; ctrlEl.innerHTML = ''; }
+        // OpenFlux has no single service container: "installed" == the exit-node
+        // image is built. Per-user exit containers are created by users via the
+        // Telegram bot (each with their own Yandex doc), so the card only offers
+        // install / reinstall / uninstall + a live count of active tunnels.
+        if (info.container_exists) {
+            installedProtocols[proto] = true;
+            const running = info.clients_running || 0;
+            const total = info.clients_total || 0;
+            statusEl.innerHTML = `<span class="badge badge-success"><span class="badge-dot"></span> ${_('openflux_ready')}</span>`;
+            if (infoEl) infoEl.classList.remove('hidden');
+            if (infoGrid) infoGrid.innerHTML = `<div class="protocol-info-item"><span class="protocol-info-label">${_('openflux_active')}</span><span class="protocol-info-value">${running} / ${total}</span></div>`;
+            actionsEl.innerHTML = `
+                <button class="btn btn-primary btn-sm" onclick="openInstallModal('${proto}')" style="flex:1">${_('reinstall')}</button>
+                <button class="btn btn-danger btn-sm" onclick="uninstallProtocol('${proto}')">${_('uninstall')}</button>
+            `;
+        } else if (info.building) {
+            installedProtocols[proto] = false;
+            if (infoEl) infoEl.classList.add('hidden');
+            statusEl.innerHTML = `<span class="badge badge-warn"><span class="badge-dot"></span> ${_('openflux_building')}</span>`;
+            actionsEl.innerHTML = `<button class="btn btn-secondary btn-sm" disabled style="flex:1">${_('openflux_building')}…</button>`;
+            try { setTimeout(() => checkServer(), 15000); } catch (e) {}  // auto-refresh until the image is built
+        } else if (info.build_failed) {
+            installedProtocols[proto] = false;
+            if (infoEl) infoEl.classList.add('hidden');
+            statusEl.innerHTML = `<span class="badge badge-danger"><span class="badge-dot"></span> ${_('openflux_build_failed')}</span>`;
+            actionsEl.innerHTML = `<button class="btn btn-primary btn-sm" onclick="openInstallModal('${proto}')" style="flex:1">${_('reinstall')}</button>`;
+        } else {
+            installedProtocols[proto] = false;
+            if (infoEl) infoEl.classList.add('hidden');
+            statusEl.innerHTML = `<span class="badge badge-warn"><span class="badge-dot"></span> ${_('not_installed')}</span>`;
+            actionsEl.innerHTML = `
+                <button class="btn btn-primary btn-sm" onclick="openInstallModal('${proto}')" id="${protoKey}-install-btn" style="flex:1">${_('install')}</button>
+            `;
+        }
+    }
+
     function updateProtocolCard(proto, info) {
         ensureProtocolCard(proto);
         const protoKey = protoDomKey(proto);
@@ -1431,6 +1500,8 @@
         // Some service cards may not exist in the template (e.g. on older builds);
         // skip quietly rather than throwing so a partial UI still renders.
         if (!statusEl || !actionsEl) return;
+
+        if (protoBase(proto) === 'openflux') { renderOpenfluxCard(proto, info); return; }
 
         const isService = SERVICE_PROTOS.includes(protoBase(proto));
 
@@ -1692,6 +1763,7 @@
         socks5Opts.style.display = 'none';
         adguardOpts.style.display = 'none';
         nginxOpts.style.display = 'none';
+        const _pg = portInput.closest('.form-group'); if (_pg) _pg.style.display = '';
 
         if (base === 'dns') {
             portLabel.textContent = _('port') + ' (Internal)';
@@ -1728,6 +1800,8 @@
             portHint.textContent = _('nginx_port_hint');
             nginxOpts.style.display = 'block';
             updateNginxDnsHint();
+        } else if (base === 'openflux') {
+            if (_pg) _pg.style.display = 'none';
         } else {
             portLabel.textContent = _('port') + ' (UDP)';
             portInput.value = currentInstallAnother ? nextSuggestedPort(currentInstallProto, 55424) : '55424';

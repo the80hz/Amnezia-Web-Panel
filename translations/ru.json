@@ -477,5 +477,10 @@
   "server_via_jump": "через узел",
   "ssh_jump_test_forwarding_ok": "Вход и тоннель работают",
   "ssh_jump_test_prohibited": "Вход проходит, но узел отказывается пробрасывать. Проверь AllowTcpForwarding (и PermitOpen) в его sshd.",
-  "ssh_jump_test_forward_failed": "Вход проходит, но тоннель открыть не удалось"
+  "ssh_jump_test_forward_failed": "Вход проходит, но тоннель открыть не удалось",
+  "openflux_desc": "Аварийный канал: туннель через Яндекс.Документы — работает даже при белом списке IP. Пользователи подключаются приложением OpenFlux и своим публичным документом.",
+  "openflux_ready": "Готово",
+  "openflux_active": "Активные туннели",
+  "openflux_building": "Сборка образа…",
+  "openflux_build_failed": "Ошибка сборки"
 }

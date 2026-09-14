@@ -444,5 +444,10 @@
   "server_via_jump": "经由跳板机",
   "ssh_jump_test_forwarding_ok": "登录与隧道均正常",
   "ssh_jump_test_prohibited": "登录成功，但跳板机拒绝转发。请检查其 sshd 的 AllowTcpForwarding（以及 PermitOpen）。",
-  "ssh_jump_test_forward_failed": "登录成功，但隧道无法建立"
+  "ssh_jump_test_forward_failed": "登录成功，但隧道无法建立",
+  "openflux_desc": "Emergency channel that tunnels through Yandex Docs — works even under an IP whitelist. Users connect with the OpenFlux app and their own public Yandex document.",
+  "openflux_ready": "Ready",
+  "openflux_active": "Active tunnels",
+  "openflux_building": "Building image…",
+  "openflux_build_failed": "Build failed"
 }
