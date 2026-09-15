@@ -37,6 +37,15 @@ OPENFLUX_MAX_PER_USER = int(os.environ.get('OPENFLUX_MAX_PER_USER', '3'))
 OPENFLUX_IOS_URL = os.environ.get('OPENFLUX_IOS_URL', 'https://testflight.apple.com/join/BwnAcdus')
 OPENFLUX_ANDROID_URL = os.environ.get('OPENFLUX_ANDROID_URL', 'https://github.com/p1neappleXpress/OpenFluxAndroid/releases')
 
+# Image rollout: exit nodes PULL a prebuilt image from a registry instead of
+# compiling the gVisor/Go image locally (which OOM-killed small 1-core VPSs and
+# took minutes). CI (.github/workflows/openflux-image.yml) builds the upstream
+# OpenFlux repo and pushes ghcr.io/<owner>/amnezia-openflux; the node just does
+# `docker pull` + retag to the local IMAGE_NAME. Set OPENFLUX_ALLOW_LOCAL_BUILD=1
+# to fall back to the old on-server git-clone+build (kept for airgapped servers).
+OPENFLUX_IMAGE_REF = os.environ.get('OPENFLUX_IMAGE', 'ghcr.io/the80hz/amnezia-openflux:latest')
+OPENFLUX_ALLOW_LOCAL_BUILD = os.environ.get('OPENFLUX_ALLOW_LOCAL_BUILD', '') not in ('', '0', 'false', 'no', 'False')
+
 # Yandex-only URL allowlist (host part). A shared doc opens via disk.yandex.ru/i/...
 _YANDEX_URL_RE = re.compile(r'^https://([A-Za-z0-9-]+\.)*yandex\.(ru|com)/', re.IGNORECASE)
 
@@ -102,14 +111,15 @@ class OpenFluxManager:
         return any(c['status'].startswith('Up') for c in self._list_client_containers())
 
     def _build_in_progress(self) -> bool:
-        # Bracket the first char so pgrep does NOT match its own wrapping shell:
-        # paramiko runs commands via `sh -c '<cmd>'`, whose cmdline contains the
-        # pattern, so a plain pattern self-matches and always returns "yes"
+        # "build" now means the async image PULL (or the opt-in local build) is
+        # running. Bracket the first char so pgrep does NOT match its own wrapping
+        # shell: paramiko runs commands via `sh -c '<cmd>'`, whose cmdline contains
+        # the pattern, so a plain pattern self-matches and always returns "yes"
         # (which made install_protocol think a build was always running and never
-        # launch one). `[o]penflux` matches a real build's cmdline but not the
-        # literal "[o]penflux" text in the pgrep command itself.
+        # launch one). `[o]penflux` matches the real `_build.sh` wrapper (common to
+        # both pull and local-build paths) but not the literal text in this command.
         out, _, _ = self.ssh.run_sudo_command(
-            "pgrep -f '[o]penflux/_build.sh|[d]ocker build -t amnezia-openflux' >/dev/null 2>&1 && echo yes || echo no"
+            "pgrep -f '[o]penflux/_build.sh|[d]ocker pull ghcr.io/the80hz/amnezia-openflux|[d]ocker build -t amnezia-openflux' >/dev/null 2>&1 && echo yes || echo no"
         )
         return 'yes' in out
 
@@ -147,37 +157,22 @@ class OpenFluxManager:
         return []
 
     # ================================================ INSTALL / UNINSTALL
-    def install_protocol(self, protocol_type='openflux', port=None, repo_url=None, rebuild=False, **_):
-        if not self.check_docker_installed():
-            return {'status': 'error', 'message': 'Docker not installed'}
-        repo_url = repo_url or self.REPO_URL
+    def _pull_script_body(self) -> str:
+        """Registry rollout: pull the prebuilt image and retag to the local
+        IMAGE_NAME so validate/add_client run against a stable local tag. Fast
+        (seconds) and needs no buildx/git/compiler on the node."""
+        ref = OPENFLUX_IMAGE_REF
+        return "\n".join([
+            f"echo 'Pulling {ref} ...'",
+            f"docker pull {shlex.quote(ref)}",
+            f"docker tag {shlex.quote(ref)} {self.IMAGE_NAME}",
+            f"echo 'OpenFlux image ready: {self.IMAGE_NAME}'",
+        ])
 
-        if self._image_present() and not rebuild:
-            return {
-                'status': 'success',
-                'protocol': 'openflux',
-                'base_protocol': self.PROTOCOL,
-                'image': self.IMAGE_NAME,
-                'message': 'OpenFlux image already present',
-                'log': ['OpenFlux exit-node image already built on this server.'],
-            }
-
-        if self._build_in_progress():
-            return {'status': 'building', 'protocol': 'openflux', 'base_protocol': self.PROTOCOL,
-                    'message': 'OpenFlux image build already in progress',
-                    'log': ['Сборка образа уже идёт — статус обновится, когда образ будет готов.']}
-        # The Go image build takes minutes. Run it fully DETACHED (setsid) AND as
-        # root: run_sudo_script runs the WHOLE script under sudo, unlike a sudo'd
-        # one-liner where only the first command before ';' is elevated. The HTTP
-        # request returns immediately; get_server_status reports 'building' (pgrep)
-        # and 'build_failed' (marker file). buildx is ensured for BuildKit caches.
-        launcher = "\n".join([
-            "#!/bin/bash",
-            "set -u",
-            f"mkdir -p {self.BUILD_DIR}",
-            f"rm -f {self.BUILD_FAILED}",
-            f"cat > {self.BUILD_DIR}/_build.sh <<'OFXBUILD'",
-            "set -e",
+    def _local_build_script_body(self, repo_url) -> str:
+        """Opt-in fallback (OPENFLUX_ALLOW_LOCAL_BUILD=1) for airgapped servers
+        that cannot reach the registry: git clone + docker build on the node."""
+        return "\n".join([
             "if ! docker buildx version >/dev/null 2>&1; then",
             "  export DEBIAN_FRONTEND=noninteractive",
             "  apt-get install -y docker-buildx >/dev/null 2>&1 || apt-get install -y docker-buildx-plugin >/dev/null 2>&1 || true",
@@ -188,22 +183,62 @@ class OpenFluxManager:
             f"  rm -rf {self.REPO_DIR} && git clone --depth 1 {repo_url} {self.REPO_DIR}",
             "fi",
             f"DOCKER_BUILDKIT=1 docker build -t {self.IMAGE_NAME} {self.REPO_DIR}",
+        ])
+
+    def install_protocol(self, protocol_type='openflux', port=None, repo_url=None, rebuild=False, **_):
+        if not self.check_docker_installed():
+            return {'status': 'error', 'message': 'Docker not installed'}
+
+        if self._image_present() and not rebuild:
+            return {
+                'status': 'success',
+                'protocol': 'openflux',
+                'base_protocol': self.PROTOCOL,
+                'image': self.IMAGE_NAME,
+                'message': 'OpenFlux image already present',
+                'log': ['OpenFlux exit-node image already present on this server.'],
+            }
+
+        if self._build_in_progress():
+            return {'status': 'building', 'protocol': 'openflux', 'base_protocol': self.PROTOCOL,
+                    'message': 'OpenFlux image rollout already in progress',
+                    'log': ['Загрузка образа уже идёт — статус обновится, когда образ будет готов.']}
+
+        # Rollout runs fully DETACHED (setsid) AND as root: run_sudo_script runs the
+        # WHOLE script under sudo, unlike a sudo'd one-liner where only the first
+        # command before ';' is elevated. The HTTP request returns immediately;
+        # get_server_status reports 'building' (pgrep) and 'build_failed' (marker).
+        # Default path is a registry `docker pull` (no build load on the node); the
+        # git-clone+build path is opt-in via OPENFLUX_ALLOW_LOCAL_BUILD.
+        local_build = OPENFLUX_ALLOW_LOCAL_BUILD
+        inner = (self._local_build_script_body(repo_url or self.REPO_URL)
+                 if local_build else self._pull_script_body())
+        launcher = "\n".join([
+            "#!/bin/bash",
+            "set -u",
+            f"mkdir -p {self.BUILD_DIR}",
+            f"rm -f {self.BUILD_FAILED}",
+            f"cat > {self.BUILD_DIR}/_build.sh <<'OFXBUILD'",
+            "set -e",
+            inner,
             "OFXBUILD",
             f"setsid bash -c 'bash {self.BUILD_DIR}/_build.sh > {self.BUILD_LOG} 2>&1 || touch {self.BUILD_FAILED}' </dev/null >/dev/null 2>&1 &",
         ])
         _, err, code = self.ssh.run_sudo_script(launcher, timeout=60)
         if code != 0:
-            return {'status': 'error', 'message': f'Failed to start build: {(err or "").strip()[:200]}'}
+            return {'status': 'error', 'message': f'Failed to start rollout: {(err or "").strip()[:200]}'}
+        log = (['Локальная сборка образа OpenFlux запущена в фоне (~2–5 мин).',
+                'Статус обновится автоматически, когда образ будет готов.']
+               if local_build else
+               [f'Загрузка образа из реестра запущена в фоне ({OPENFLUX_IMAGE_REF}).',
+                'Статус обновится автоматически (обычно <1 мин).'])
         return {
             'status': 'building',
             'protocol': 'openflux',
             'base_protocol': self.PROTOCOL,
             'image': self.IMAGE_NAME,
-            'message': 'OpenFlux image build started in background',
-            'log': [
-                'Сборка образа OpenFlux запущена в фоне (~2–5 мин).',
-                'Статус обновится автоматически, когда образ будет готов.',
-            ],
+            'message': 'OpenFlux image rollout started in background',
+            'log': log,
         }
 
     def uninstall_protocol(self, protocol_type='openflux'):

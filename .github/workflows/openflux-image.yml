@@ -1,0 +1,80 @@
+name: OpenFlux image
+
+# Builds the OpenFlux exit-node image from the upstream repo and pushes it to
+# GHCR so managed servers can `docker pull` it instead of compiling the
+# gVisor/Go image locally (which OOM-killed small 1-core VPSs). The panel's
+# OpenFluxManager pulls ghcr.io/<owner>/amnezia-openflux:latest and retags it.
+#
+# Auth uses the built-in GITHUB_TOKEN (packages: write) — no secrets to set up.
+# NOTE: on first push the GHCR package is PRIVATE; make it public once so nodes
+# can pull anonymously (Packages -> amnezia-openflux -> Package settings ->
+# Change visibility -> Public). The image is only open-source OpenFlux.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'OpenFlux upstream git ref (branch/tag/sha) to build'
+        default: 'main'
+  schedule:
+    - cron: '0 4 * * 1'          # weekly (Mon 04:00 UTC) — pick up upstream fixes
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/openflux-image.yml'
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/amnezia-openflux
+  UPSTREAM: p1neappleXpress/OpenFlux
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout OpenFlux upstream
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM }}
+          ref: ${{ github.event.inputs.ref || 'main' }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+            type=raw,value={{date 'YYYYMMDD-HHmmss'}}
+
+      - name: Build and push (linux/amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          echo "### OpenFlux image pushed" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.meta.outputs.tags }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
