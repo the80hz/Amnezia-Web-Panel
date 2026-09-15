@@ -102,8 +102,14 @@ class OpenFluxManager:
         return any(c['status'].startswith('Up') for c in self._list_client_containers())
 
     def _build_in_progress(self) -> bool:
+        # Bracket the first char so pgrep does NOT match its own wrapping shell:
+        # paramiko runs commands via `sh -c '<cmd>'`, whose cmdline contains the
+        # pattern, so a plain pattern self-matches and always returns "yes"
+        # (which made install_protocol think a build was always running and never
+        # launch one). `[o]penflux` matches a real build's cmdline but not the
+        # literal "[o]penflux" text in the pgrep command itself.
         out, _, _ = self.ssh.run_sudo_command(
-            "pgrep -f 'openflux/_build.sh|docker build -t amnezia-openflux' >/dev/null 2>&1 && echo yes || echo no"
+            "pgrep -f '[o]penflux/_build.sh|[d]ocker build -t amnezia-openflux' >/dev/null 2>&1 && echo yes || echo no"
         )
         return 'yes' in out
 
