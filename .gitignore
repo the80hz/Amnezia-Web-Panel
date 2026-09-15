@@ -30,7 +30,8 @@ coverage.xml
 
 # User data
 data.json
-data.json.bak
+data.json.bak*
+amnezia_data/
 data/
 data_old/
 data_new/
