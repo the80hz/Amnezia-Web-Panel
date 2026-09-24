@@ -1,0 +1,47 @@
+# The image carries code only. Panel state lives in the ./amnezia_data volume
+# mounted at /app/data, and secrets come in as environment variables, so none
+# of it may reach an image layer through `COPY . .`.
+
+# Secrets stay out of image layers; compose passes them as environment.
+.env
+.env.*
+
+# Panel state and backups: data.json holds server SSH passwords and keys.
+amnezia_data/
+data/
+data_old/
+data_new/
+**/data.json
+**/data.json.*
+**/*.bak
+**/*.bak.*
+**/*.bak-*
+**/latest_state.json
+# Tunnel binaries are downloaded at runtime.
+bin/
+
+# VCS, tooling and caches
+.git/
+.github/
+.gitignore
+.dockerignore
+.venv/
+venv/
+env/
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage*
+coverage.xml
+**/*.log
+**/.DS_Store
+.idea/
+.vscode/
+build/
+dist/
+
+# Not used at runtime
+tests/
+screen/

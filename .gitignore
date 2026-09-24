@@ -28,6 +28,9 @@ coverage.xml
 .pytest_cache/
 .mypy_cache/
 
+# Secrets
+.env
+
 # User data
 data.json
 data.json.bak*
