@@ -95,6 +95,35 @@
     {% endif %}
 </section>
 
+{% if xui_enabled %}
+<section style="margin-top: var(--space-xl);">
+    <div class="card">
+        <div class="card-header" style="margin-bottom: var(--space-md); gap: var(--space-md); flex-wrap: wrap;">
+            <div>
+                <div class="card-title">📡 {{ _('xui_sub_title') }}</div>
+                <div class="card-subtitle">{{ _('xui_sub_desc') }}</div>
+            </div>
+            <button class="btn btn-primary btn-sm" id="xuiSubButton" onclick="getXuiSubscription()">
+                {{ _('xui_sub_get') }}
+            </button>
+        </div>
+        <div id="xuiSubResult" class="hidden">
+            <div class="vpn-link-box" id="xuiSubUrl"></div>
+            <div class="config-actions" style="margin-top: var(--space-sm);">
+                <button class="btn btn-secondary btn-sm" onclick="copyToClipboard(currentXuiSubUrl)" style="flex:1">
+                    {{ _('xui_sub_copy') }}
+                </button>
+            </div>
+            <div class="form-hint" style="margin-top: var(--space-sm);">{{ _('xui_sub_instructions') }}</div>
+            <div class="form-hint hidden" id="xuiSubPartial" style="margin-top: var(--space-sm);">⚠️ {{ _('xui_sub_partial') }}</div>
+            <div class="qr-container" style="margin-top: var(--space-md);">
+                <div id="xuiSubQr"></div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endif %}
+
 <!-- ===== Add My Connection Modal ===== -->
 <div class="modal-backdrop" id="addMyConnModal">
     <div class="modal">
@@ -327,8 +356,27 @@
         document.getElementById(panels[tab]).classList.add('active');
     }
 
-    function generateQR(text) {
-        const container = document.getElementById('qrCode');
+    let currentXuiSubUrl = '';
+
+    async function getXuiSubscription() {
+        const button = document.getElementById('xuiSubButton');
+        button.disabled = true;
+        try {
+            const result = await apiCall('/api/my/xui/subscription', 'POST');
+            currentXuiSubUrl = result.url;
+            document.getElementById('xuiSubUrl').textContent = result.url;
+            document.getElementById('xuiSubPartial').classList.toggle('hidden', !result.partial);
+            document.getElementById('xuiSubResult').classList.remove('hidden');
+            generateQR(result.url, 'xuiSubQr');
+        } catch (err) {
+            showToast(`${_('error')}: ` + err.message, 'error');
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    function generateQR(text, containerId = 'qrCode') {
+        const container = document.getElementById(containerId);
         container.innerHTML = '';
         try {
             new QRCode(container, {

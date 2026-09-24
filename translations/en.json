@@ -482,5 +482,16 @@
   "openflux_ready": "Ready",
   "openflux_active": "Active tunnels",
   "openflux_building": "Building image…",
-  "openflux_build_failed": "Build failed"
+  "openflux_build_failed": "Build failed",
+  "xui_sub_title": "VLESS + Hysteria2 subscription",
+  "xui_sub_desc": "One link with every server. Updates itself when servers change.",
+  "xui_sub_get": "Get subscription",
+  "xui_sub_copy": "📋 Copy link",
+  "xui_sub_instructions": "Install Happ or v2RayTun, choose “Add subscription by URL” (or import from clipboard) and paste this link. You can also scan the QR code.",
+  "xui_sub_partial": "Some servers are temporarily unavailable; they will appear in the subscription later.",
+  "xui_not_configured": "Subscriptions are not configured on this panel",
+  "xui_unavailable": "Subscription service is temporarily unavailable, try again later",
+  "xui_sync_button": "Sync 3x-ui",
+  "xui_sync_hint": "Attach subscription clients to new servers and mirror pauses",
+  "xui_sync_done": "3x-ui: {clients} clients, attached {attached}, toggled {toggled}, orphans {orphans}"
 }

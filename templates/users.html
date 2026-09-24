@@ -17,6 +17,13 @@
             <span style="position: absolute; left: 14px; top: 50%; transform: translateY(-50%); opacity: 0.5;">🔍</span>
         </div>
 
+        {% if xui_enabled %}
+        <button class="btn btn-secondary" id="xuiSyncButton" onclick="syncXui()" style="flex-shrink: 0;"
+            title="{{ _('xui_sync_hint') }}">
+            📡 {{ _('xui_sync_button') }}
+        </button>
+        {% endif %}
+
         {% if current_user.role == 'admin' %}
         <button class="btn btn-primary" onclick="openModal('addUserModal')" style="flex-shrink: 0;">
             <span>＋</span> {{ _('add_user') }}
@@ -724,6 +731,26 @@
             btn.disabled = false;
             text.textContent = _('create');
             spinner.classList.add('hidden');
+        }
+    }
+
+    async function syncXui() {
+        const button = document.getElementById('xuiSyncButton');
+        button.disabled = true;
+        try {
+            const r = await apiCall('/api/xui/sync', 'POST');
+            const summary = _('xui_sync_done')
+                .replace('{clients}', r.clients)
+                .replace('{attached}', Object.keys(r.attached).length)
+                .replace('{toggled}', r.enabled.length + r.disabled.length)
+                .replace('{orphans}', r.orphans.length);
+            showToast(summary, r.errors.length ? 'error' : 'success');
+            if (r.orphans.length) console.warn('3x-ui orphans (no panel user):', r.orphans);
+            if (r.errors.length) console.error('3x-ui sync errors:', r.errors);
+        } catch (err) {
+            showToast(`${_('error')}: ` + err.message, 'error');
+        } finally {
+            button.disabled = false;
         }
     }
 

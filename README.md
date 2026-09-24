@@ -273,6 +273,48 @@ Stored under `settings.ssh_jump` in `data.json`, with per-server overrides in ea
 `ssh_address` keys. `POST /api/settings/save` leaves `ssh_jump` untouched when the field is omitted, so older
 clients and scripted saves cannot wipe the bastion address.
 
+### 📡 3x-ui subscriptions (VLESS + Hysteria2)
+
+The panel can hand users a subscription from a central [3x-ui](https://github.com/MHSanaei/3x-ui) panel
+(tested with v3.8.5) next to their AmneziaWG profiles. Each panel user gets exactly one 3x-ui client, email
+`u-<panel user id>`, attached to every enabled VLESS and Hysteria inbound. AmneziaWG inbounds in 3x-ui are
+skipped on purpose: AWG stays with this panel.
+
+Configure it through the environment. In Docker, put the variables into `.env` next to `docker-compose.yml`;
+compose passes them to the container, and `.env` is git- and docker-ignored:
+
+| Variable | Meaning |
+| --- | --- |
+| `XUI_API_URL` | 3x-ui URL including its random base path, e.g. `http://192.168.0.120:2053/abc123` |
+| `XUI_API_TOKEN` | Bearer token from 3x-ui **Settings → Security → API Token**. Only the `admin` scope covers the client endpoints used here (`monitor` is metrics-only, `node-sync` lacks `clients/get`, `attach` and `bulk*`), so mint a dedicated token for the panel |
+| `XUI_SUB_URI` | Public subscription prefix, the 3x-ui `subURI` setting, e.g. `https://sub.example.com:2096/path/` |
+| `XUI_TIMEOUT` | Optional request timeout in seconds, default 30 |
+
+With all three set:
+
+*   **Users** get a *Get subscription* card on **My connections** (link, copy button, QR) and a
+    *📡 Подписка VLESS + Hysteria2* button in the Telegram bot (also `/subscription`). The first request creates
+    the client; later ones return the same link and attach the client to inbounds it lacks. Disabled users get
+    nothing.
+*   **Pausing, resuming and deleting** a panel user (by hand, by traffic limit or expiry, or by Remnawave sync)
+    disables, enables or deletes the 3x-ui client. This is best effort: a 3x-ui outage does not block the
+    panel and is logged.
+*   **After adding a node or inbound**, run *Sync 3x-ui* on the **Users** page, *🔄 Sync 3x-ui clients* in the
+    bot admin menu, `/xuisync` or `POST /api/xui/sync`. It attaches every panel-owned client to the new
+    VLESS/Hysteria inbounds, mirrors the pause state and Telegram ID, and lists `u-*` clients with no panel user
+    (orphans) without deleting them.
+
+3x-ui quirks handled in `managers/xui_manager.py`:
+
+*   New clients are created with explicit `id` (UUID), `auth`, `flow: xtls-rprx-vision` and a 16-hex `subId`.
+    Without an explicit `auth`, 3x-ui mints a different one per Hysteria inbound but puts a single one into the
+    links, and some nodes answer `auth failed code 404`.
+*   `clients/update/{email}` replaces the whole row, so updates read the record, send `id` = `uuid` (the record's
+    `id` is a DB row number), drop `allowedIPs`/`allowedIPsByInbound` and post the full object.
+*   The 3x-ui subscription server keeps listing links of a disabled client. The nodes do reject it, so a paused
+    user's link stops working even though it still shows servers.
+*   3x-ui traffic is not counted into the panel's per-user traffic limit.
+
 ### Technology Stack
 *   **Backend**: FastAPI (Python), `asyncio` for concurrent SSH/probe work
 *   **Frontend**: Vanilla JS, Jinja2, Custom CSS (Glassmorphism, full set of CSS animations for promo blocks)
@@ -293,10 +335,12 @@ web-panel/
 │   ├── telemt_manager.py     # Telegram MTProxy
 │   ├── dns_manager.py        # AmneziaDNS (Unbound)
 │   ├── adguard_manager.py    # AdGuard Home
-│   └── socks5_manager.py     # 3proxy-based SOCKS5
+│   ├── socks5_manager.py     # 3proxy-based SOCKS5
+│   └── xui_manager.py        # 3x-ui subscription client (VLESS + Hysteria2)
 ├── static/                   # CSS / favicon / vendored JS
 ├── templates/                # Jinja2 templates
 ├── translations/             # en / ru / fr / zh / fa
+├── tests/                    # unittest/pytest suite (3x-ui client layer)
 └── data.json                 # Panel state (servers, users, tokens, settings)
 ```
 

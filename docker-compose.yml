@@ -10,6 +10,11 @@ services:
       - "${APP_PORT:-5000}:5000"
     volumes:
       - ./amnezia_data:/app/data
+    # 3x-ui subscriptions: set these in .env next to this file (never commit it).
+    environment:
+      XUI_API_URL: ${XUI_API_URL:-}
+      XUI_API_TOKEN: ${XUI_API_TOKEN:-}
+      XUI_SUB_URI: ${XUI_SUB_URI:-}
     restart: unless-stopped
 
     healthcheck:

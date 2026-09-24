@@ -20,6 +20,7 @@ import time
 import urllib.request
 import zipfile
 import signal
+import dataclasses
 from datetime import datetime, timedelta
 import io
 from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, StreamingResponse, FileResponse
@@ -51,6 +52,7 @@ from managers.xray_manager import XrayManager
 from managers.wireguard_manager import WireGuardManager
 from managers.backup_manager import BackupManager
 from managers.openflux_manager import OPENFLUX_MAX_PER_USER
+from managers import xui_manager as xui
 import telegram_bot as tg_bot
 
 # Configure logging
@@ -1534,10 +1536,33 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
+async def xui_mirror_users(user_ids: List[str], *, enable: Optional[bool] = None, delete: bool = False):
+    """Mirror a panel pause/resume/delete onto the users' 3x-ui clients.
+
+    Best effort: a 3x-ui outage must not block panel operations. Leftovers are
+    fixed by the admin sync (enable flag) or reported by it as orphans (deletes).
+    """
+    config = xui.XUIConfig.from_env()
+    if not config or not user_ids:
+        return
+    users = [{'id': uid} for uid in user_ids]
+    try:
+        async with xui.XUIClient(config) as client:
+            if delete:
+                for user in users:
+                    await xui.delete_user(client, user)
+            elif enable is not None:
+                await xui.set_user_enabled(client, users, enable)
+    except xui.XUIError as e:
+        action = 'delete' if delete else ('enable' if enable else 'disable')
+        logger.warning("3x-ui %s failed for users %s: %s", action, user_ids, e)
+
+
 async def perform_delete_user(data: dict, user_id: str):
     user = next((u for u in data['users'] if u['id'] == user_id), None)
     if not user:
         return False
+    await xui_mirror_users([user_id], delete=True)
     # Remove user's connections from servers
     user_conns = [c for c in data.get('user_connections', []) if c['user_id'] == user_id]
     for uc in user_conns:
@@ -1564,6 +1589,7 @@ async def perform_toggle_user(data: dict, user_id: str, enable: bool) -> bool:
         return False
 
     user['enabled'] = enable
+    await xui_mirror_users([user_id], enable=enable)
 
     user_conns = [c for c in data.get('user_connections', []) if c['user_id'] == user_id]
     for uc in user_conns:
@@ -1592,6 +1618,12 @@ async def perform_mass_operations(delete_uids: List[str] = None, toggle_uids: Li
     """
     data = load_data()
     server_ops = {}
+
+    if delete_uids:
+        await xui_mirror_users(list(delete_uids), delete=True)
+    if toggle_uids:
+        for enabled in (True, False):
+            await xui_mirror_users([uid for uid, en in toggle_uids if bool(en) is enabled], enable=enabled)
 
     def get_ops(sid):
         if sid not in server_ops:
@@ -2656,7 +2688,7 @@ async def users_page(request: Request):
     for u in users_list:
         u['connections_count'] = sum(1 for c in conns if c['user_id'] == u['id'])
     servers = sanitize_servers_for_ui(data['servers'])
-    return tpl(request, 'users.html', users=users_list, servers=servers)
+    return tpl(request, 'users.html', users=users_list, servers=servers, xui_enabled=xui.XUIConfig.from_env() is not None)
 
 
 @app.get('/my', response_class=HTMLResponse, tags=["System Templates"])
@@ -2680,7 +2712,10 @@ async def my_connections_page(request: Request):
             c['server_emoji'] = '🖥'
             c['server_paused'] = False
     _attach_latest_state_to_connections(conns, latest_state)
-    return tpl(request, 'my_connections.html', connections=conns, servers=sanitize_servers_for_ui(data.get('servers', [])), max_my_connections=30)
+    return tpl(
+        request, 'my_connections.html', connections=conns, servers=sanitize_servers_for_ui(data.get('servers', [])),
+        max_my_connections=30, xui_enabled=xui.XUIConfig.from_env() is not None,
+    )
 
 
 # ======================== AUTH API ========================
@@ -4569,6 +4604,57 @@ async def api_my_add_connection(request: Request, req: MyAddConnectionRequest):
     except Exception as e:
         logger.exception("Error creating my connection")
         return JSONResponse({'error': str(e)}, status_code=500)
+
+
+# ======================== 3X-UI SUBSCRIPTION ========================
+
+@app.post('/api/my/xui/subscription', tags=["Self-service"])
+async def api_my_xui_subscription(request: Request):
+    """Return the caller's 3x-ui (VLESS + Hysteria2) subscription URL, creating the client on first use."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({'error': 'Forbidden'}, status_code=403)
+    lang = request.cookies.get('lang', 'ru')
+    config = xui.XUIConfig.from_env()
+    if not config:
+        return JSONResponse({'error': _t('xui_not_configured', lang)}, status_code=503)
+    if not user.get('enabled', True):
+        return JSONResponse({'error': _t('account_disabled', lang)}, status_code=403)
+    try:
+        async with xui.XUIClient(config) as client:
+            sub = await xui.ensure_subscription(client, user)
+    except xui.XUIError as e:
+        logger.warning("3x-ui subscription failed for user %s: %s", user.get('username'), e)
+        return JSONResponse({'error': _t('xui_unavailable', lang)}, status_code=502)
+    if sub.missing_inbound_ids:
+        logger.warning("3x-ui client %s not attached to inbounds %s: %s", sub.email, sub.missing_inbound_ids, sub.errors)
+    return {
+        'status': 'success',
+        'url': sub.url,
+        'created': sub.created,
+        'partial': bool(sub.missing_inbound_ids),
+    }
+
+
+@app.post('/api/xui/sync', tags=["Users"])
+async def api_xui_sync(request: Request):
+    """Attach existing 3x-ui clients to new VLESS/Hysteria inbounds and mirror pause state / Telegram IDs."""
+    if not _check_admin(request):
+        return JSONResponse({'error': 'Forbidden'}, status_code=403)
+    config = xui.XUIConfig.from_env()
+    if not config:
+        return JSONResponse({'error': '3x-ui is not configured (XUI_API_URL, XUI_API_TOKEN, XUI_SUB_URI)'}, status_code=503)
+    try:
+        async with xui.XUIClient(config) as client:
+            report = await xui.sync_all(client, load_data().get('users', []))
+    except xui.XUIError as e:
+        logger.warning("3x-ui sync failed: %s", e)
+        return JSONResponse({'error': str(e)}, status_code=502)
+    logger.info(
+        "3x-ui sync: clients=%s attached=%s enabled=%s disabled=%s tg_updated=%s orphans=%s errors=%s",
+        report.clients, report.attached, report.enabled, report.disabled, report.tg_updated, report.orphans, report.errors,
+    )
+    return {'status': 'success', **dataclasses.asdict(report)}
 
 
 @app.post('/api/users/{user_id}/share/setup', tags=["Users"])

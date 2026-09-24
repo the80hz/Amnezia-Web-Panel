@@ -19,6 +19,7 @@ from typing import Optional, Callable, Tuple
 import httpx
 
 from managers.openflux_manager import OPENFLUX_MAX_PER_USER
+from managers import xui_manager as xui
 
 logger = logging.getLogger(__name__)
 
@@ -408,6 +409,7 @@ def _build_connections_keyboard(conns: list, data: dict) -> dict:
             label += " — не работает"
         rows.append([{"text": label, "callback_data": f"cfg:{c['id']}"}])
     rows.append([{"text": "➕ Создать профиль", "callback_data": "new:start"}])
+    rows.extend(_xui_subscription_rows())
     rows.append([{"text": "🗑 Удалить профиль", "callback_data": "del:start"}])
     rows.append([{"text": "🔑 Доступ к веб-панели", "callback_data": "web:access"}])
     rows.append([{"text": "🔄 Обновить список", "callback_data": "refresh"}])
@@ -423,10 +425,18 @@ def _build_main_actions_keyboard() -> dict:
     }
 
 
+def _xui_subscription_rows() -> list:
+    """Subscription button row, shown only when the 3x-ui integration is configured."""
+    if xui.XUIConfig.from_env() is None:
+        return []
+    return [[{"text": "📡 Подписка VLESS + Hysteria2", "callback_data": "xui:sub"}]]
+
+
 def _build_empty_connections_keyboard() -> dict:
     return {
         "inline_keyboard": [
             [{"text": "➕ Создать профиль", "callback_data": "new:start"}],
+            *_xui_subscription_rows(),
             [{"text": "🔑 Доступ к веб-панели", "callback_data": "web:access"}],
             [{"text": "🔄 Обновить список", "callback_data": "refresh"}],
         ]
@@ -515,14 +525,16 @@ def _assign_user_keyboard(data: dict, server_id: int, proto: str, name: str) -> 
 
 
 def _admin_main_keyboard() -> dict:
-    return {
-        "inline_keyboard": [
-            [{"text": "🖥 Servers", "callback_data": "adm:servers"}],
-            [{"text": "👤 Users", "callback_data": "adm:users"}],
-            [{"text": "🔐 My connections", "callback_data": "adm:myconns"}],
-            [{"text": "➕ How to add a server", "callback_data": "adm:addserver_help"}],
-        ]
-    }
+    rows = [
+        [{"text": "🖥 Servers", "callback_data": "adm:servers"}],
+        [{"text": "👤 Users", "callback_data": "adm:users"}],
+        [{"text": "🔐 My connections", "callback_data": "adm:myconns"}],
+    ]
+    if xui.XUIConfig.from_env() is not None:
+        rows.append([{"text": "📡 My subscription", "callback_data": "xui:sub"}])
+        rows.append([{"text": "🔄 Sync 3x-ui clients", "callback_data": "adm:xuisync"}])
+    rows.append([{"text": "➕ How to add a server", "callback_data": "adm:addserver_help"}])
+    return {"inline_keyboard": rows}
 
 
 def _server_keyboard(data: dict) -> dict:
@@ -1365,6 +1377,83 @@ async def _handle_web_access_password_input(
 # ----------------------------------------------------------------------- #
 #  Admin handlers
 # ----------------------------------------------------------------------- #
+XUI_SUBSCRIPTION_HELP = (
+    "<b>Как подключиться</b>\n"
+    "1. Установите приложение Happ или v2RayTun (iOS, Android, Windows, macOS).\n"
+    "2. Нажмите на ссылку выше, чтобы скопировать её.\n"
+    "3. В приложении выберите «Добавить подписку по ссылке» или импорт из буфера обмена и вставьте ссылку.\n\n"
+    "Список серверов в подписке обновляется сам. Профили AmneziaWG выдаются отдельно, кнопкой «Создать профиль»."
+)
+
+
+async def _handle_xui_subscription(api: TelegramAPI, chat_id: int, callback_id: Optional[str], tg_id: str, load_data_fn: Callable):
+    if callback_id:
+        await api.answer_callback(callback_id, "Готовлю подписку...")
+    panel_user = _find_user(load_data_fn, tg_id)
+    if not panel_user:
+        await api.send_message(chat_id, "❌ Access denied.")
+        return
+    config = xui.XUIConfig.from_env()
+    if config is None:
+        await api.send_message(chat_id, "❌ Подписки на этой панели не настроены.")
+        return
+    if panel_user.get("enabled") is False:
+        await api.send_message(chat_id, "⏸ Ваш доступ приостановлен, подписку выдать нельзя.")
+        return
+    try:
+        async with xui.XUIClient(config) as client:
+            sub = await xui.ensure_subscription(client, panel_user)
+    except xui.XUIError as e:
+        logger.warning("Bot: 3x-ui subscription failed for user %s: %s", panel_user.get("username"), e)
+        await api.send_message(chat_id, "❌ Сервис подписок временно недоступен, попробуйте позже.")
+        return
+    if sub.missing_inbound_ids:
+        logger.warning("Bot: 3x-ui client %s not attached to inbounds %s: %s", sub.email, sub.missing_inbound_ids, sub.errors)
+    text = (
+        "📡 <b>Подписка VLESS + Hysteria2</b>\n\n"
+        f"<code>{_e(sub.url)}</code>\n\n"
+        + XUI_SUBSCRIPTION_HELP
+    )
+    if sub.missing_inbound_ids:
+        text += "\n\n⚠️ Часть серверов временно недоступна, они появятся в подписке позже."
+    await api.send_message(chat_id, text)
+
+
+async def _admin_xui_sync(api: TelegramAPI, chat_id: int, load_data_fn: Callable):
+    config = xui.XUIConfig.from_env()
+    if config is None:
+        await api.send_message(chat_id, "❌ 3x-ui is not configured (XUI_API_URL, XUI_API_TOKEN, XUI_SUB_URI).")
+        return
+    status = await api.send_message(chat_id, "⏳ Syncing 3x-ui clients...")
+    try:
+        async with xui.XUIClient(config) as client:
+            report = await xui.sync_all(client, load_data_fn().get("users", []))
+    except xui.XUIError as e:
+        logger.warning("Bot: 3x-ui sync failed: %s", e)
+        await api.send_message(chat_id, f"❌ 3x-ui sync failed: {_e(e)}")
+        return
+    lines = [
+        "🔄 <b>3x-ui sync</b>",
+        f"Panel clients: <b>{report.clients}</b>",
+        f"Attached to new inbounds: <b>{len(report.attached)}</b>",
+        f"Enabled / disabled: <b>{len(report.enabled)}</b> / <b>{len(report.disabled)}</b>",
+        f"Telegram ID updated: <b>{len(report.tg_updated)}</b>",
+    ]
+    for email, ids in list(report.attached.items())[:20]:
+        lines.append(f"• <code>{_e(email)}</code> → {_e(', '.join(map(str, ids)))}")
+    if report.orphans:
+        lines.append(f"\n⚠️ Clients without a panel user ({len(report.orphans)}), delete them in 3x-ui:")
+        lines.extend(f"• <code>{_e(email)}</code>" for email in report.orphans[:20])
+    if report.errors:
+        lines.append(f"\n❌ Errors ({len(report.errors)}):")
+        lines.extend(f"• {_e(err)[:300]}" for err in report.errors[:10])
+    message_id = (status.get("result") or {}).get("message_id")
+    if message_id:
+        await api.edit_message(chat_id, message_id, "\n".join(lines), reply_markup={"inline_keyboard": [[{"text": "⬅️ Admin menu", "callback_data": "adm:menu"}]]})
+    else:
+        await api.send_message(chat_id, "\n".join(lines))
+
+
 def _require_admin(load_data_fn: Callable, tg_id: str):
     user = _find_user(load_data_fn, tg_id)
     if not user or not _is_admin(user):
@@ -1887,6 +1976,16 @@ async def _dispatch(api: TelegramAPI, update: dict, load_data_fn: Callable, gene
                 await api.send_message(msg["chat"]["id"], "❌ Access denied.")
         elif text.startswith("/addserver"):
             await _handle_add_server_command(api, msg, load_data_fn, save_data_fn)
+        elif text.startswith("/subscription"):
+            panel_user = _find_user(load_data_fn, tg_id)
+            if not await _check_chat_gate(api, chat_id, tg_id, load_data_fn(), panel_user):
+                return
+            await _handle_xui_subscription(api, chat_id, None, tg_id, load_data_fn)
+        elif text.startswith("/xuisync"):
+            if _require_admin(load_data_fn, tg_id):
+                await _admin_xui_sync(api, chat_id, load_data_fn)
+            else:
+                await api.send_message(chat_id, "❌ Access denied.")
 
     elif "callback_query" in update:
         cq = update["callback_query"]
@@ -1941,6 +2040,9 @@ async def _dispatch(api: TelegramAPI, update: dict, load_data_fn: Callable, gene
         if data_str == "web:access":
             await _handle_web_access_start(api, chat_id, message_id, callback_id, tg_id)
             return
+        if data_str == "xui:sub":
+            await _handle_xui_subscription(api, chat_id, callback_id, tg_id, load_data_fn)
+            return
 
         panel_user = _require_admin(load_data_fn, tg_id)
         if not panel_user:
@@ -1957,6 +2059,8 @@ async def _dispatch(api: TelegramAPI, update: dict, load_data_fn: Callable, gene
             await _admin_users(api, chat_id, message_id, load_data_fn)
         elif data_str == "adm:myconns":
             await _send_user_connections(api, chat_id, panel_user, load_data_fn)
+        elif data_str == "adm:xuisync":
+            await _admin_xui_sync(api, chat_id, load_data_fn)
         elif data_str == "adm:addserver_help":
             await api.edit_message(
                 chat_id,
